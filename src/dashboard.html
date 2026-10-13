@@ -1,0 +1,983 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Antigravity Light Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090d16;
+      --surface: #111827;
+      --surface-hover: #1f2937;
+      --surface-border: #1f293d;
+      --primary: #3b82f6;
+      --primary-glow: rgba(59, 130, 246, 0.25);
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --font: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Header */
+    header {
+      background: rgba(17, 24, 39, 0.8);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--surface-border);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      box-shadow: 0 0 20px rgba(99, 102, 241, 0.4);
+    }
+
+    .brand-title {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #ffffff, #93c5fd);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    button {
+      font-family: var(--font);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.15s ease;
+    }
+
+    .btn-primary {
+      background: #2563eb;
+      color: white;
+    }
+    .btn-primary:hover { background: #1d4ed8; }
+
+    .btn-secondary {
+      background: var(--surface);
+      border-color: var(--surface-border);
+      color: var(--text);
+    }
+    .btn-secondary:hover { background: var(--surface-hover); border-color: #374151; }
+
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.1);
+      border-color: rgba(239, 68, 68, 0.3);
+      color: #f87171;
+    }
+    .btn-danger:hover { background: rgba(239, 68, 68, 0.2); }
+
+    /* Layout */
+    main {
+      max-width: 1200px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      flex: 1;
+    }
+
+    /* Metrics Grid */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .metric-card {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: 12px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .metric-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.5), transparent);
+    }
+
+    .metric-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .metric-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: #ffffff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .metric-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .badge-success { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .badge-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+    .badge-blue { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+
+    /* Section Cards */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: 14px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--surface-border);
+      padding-bottom: 14px;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Accounts List */
+    .accounts-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .account-row {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--surface-border);
+      border-radius: 10px;
+      padding: 16px;
+      display: grid;
+      grid-template-columns: 2fr 3fr 1.5fr;
+      align-items: center;
+      gap: 16px;
+      transition: border-color 0.15s ease;
+    }
+
+    .account-row:hover {
+      border-color: #3b82f6;
+    }
+
+    .account-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      overflow: hidden;
+    }
+
+    .account-email {
+      font-weight: 600;
+      font-size: 14px;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .account-quotas {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .quota-bar-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .quota-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    .progress-track {
+      height: 6px;
+      background: #1e293b;
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 9999px;
+      transition: width 0.3s ease;
+    }
+
+    .fill-green { background: linear-gradient(90deg, #10b981, #34d399); }
+    .fill-yellow { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .fill-red { background: linear-gradient(90deg, #ef4444, #f87171); }
+
+    .account-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    /* Proxy Quick Connect */
+    .proxy-box {
+      background: #0b1120;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .code-snippet {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: #020617;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid #1e293b;
+      color: #93c5fd;
+      position: relative;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .copy-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      padding: 4px 8px;
+      font-size: 11px;
+      background: #1e293b;
+      color: #cbd5e1;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .copy-btn:hover { background: #334155; }
+
+    /* Playground */
+    .playground-input-group {
+      display: flex;
+      gap: 8px;
+    }
+
+    input[type="text"], input[type="number"], textarea {
+      width: 100%;
+      background: #020617;
+      border: 1px solid #334155;
+      color: #fff;
+      font-family: var(--font);
+      font-size: 13px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      outline: none;
+    }
+    input:focus, textarea:focus { border-color: #3b82f6; }
+
+    .stream-output {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      background: #020617;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 14px;
+      min-height: 80px;
+      max-height: 200px;
+      overflow-y: auto;
+      color: #e2e8f0;
+      white-space: pre-wrap;
+    }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 20px;
+    }
+
+    .modal-box {
+      background: #111827;
+      border: 1px solid var(--surface-border);
+      border-radius: 16px;
+      max-width: 500px;
+      width: 100%;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .close-modal {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 20px;
+      cursor: pointer;
+    }
+
+    /* Notification Toast */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 12px 20px;
+      border-radius: 10px;
+      background: #1e293b;
+      color: #fff;
+      border: 1px solid #334155;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.25s ease;
+      z-index: 200;
+    }
+    #toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    @media (max-width: 800px) {
+      .account-row {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .account-actions {
+        justify-content: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon">⚡</div>
+      <div>
+        <div class="brand-title">Antigravity Light</div>
+        <div style="font-size: 11px; color: var(--text-muted);">Quota Watcher & OpenAI Proxy</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="btn-secondary" onclick="fetchStatus(true)">🔄 Refresh</button>
+      <button class="btn-primary" onclick="openAddAccountModal()">➕ Add Account</button>
+      <button class="btn-secondary" onclick="openSettingsModal()">⚙️ Settings</button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main>
+
+    <!-- Top Metrics -->
+    <div class="metrics-grid">
+      <!-- Active in IDE -->
+      <div class="metric-card">
+        <div class="metric-title">
+          <span>Active IDE Account</span>
+          <span class="badge badge-blue">Antigravity 2.0</span>
+        </div>
+        <div class="metric-value" id="activeIdeEmail">Detecting...</div>
+        <div class="metric-sub" id="activeIdeSource">Resolving system state...</div>
+      </div>
+
+      <!-- Active Conversation -->
+      <div class="metric-card">
+        <div class="metric-title">
+          <span>Chat Turn State</span>
+          <span class="badge badge-success" id="chatBadge">Idle</span>
+        </div>
+        <div class="metric-value" id="chatTitle">No Active Chat</div>
+        <div class="metric-sub" id="chatStatus">Auto-Resume Ready</div>
+      </div>
+
+      <!-- Registered Pool -->
+      <div class="metric-card">
+        <div class="metric-title">
+          <span>Account Pool</span>
+          <span class="badge badge-blue" id="poolCount">0 Accounts</span>
+        </div>
+        <div class="metric-value" id="poolHealthyCount">0 Healthy</div>
+        <div class="metric-sub" id="poolThreshold">Switch threshold: &le; 5%</div>
+      </div>
+
+      <!-- Local Proxy Status -->
+      <div class="metric-card">
+        <div class="metric-title">
+          <span>OpenAI Proxy</span>
+          <span class="badge badge-success">Online</span>
+        </div>
+        <div class="metric-value" style="font-family: var(--font-mono); font-size: 15px;">http://127.0.0.1:8080/v1</div>
+        <div class="metric-sub">OpenAI & Gemini Compatible</div>
+      </div>
+    </div>
+
+    <!-- Accounts Section -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <span>Google Accounts Pool & Quotas</span>
+        </div>
+        <button class="btn-secondary" style="font-size: 12px; padding: 6px 12px;" onclick="checkAllQuotas()">
+          ⚡ Check All Limits Now
+        </button>
+      </div>
+
+      <div class="accounts-list" id="accountsList">
+        <div style="text-align: center; padding: 30px; color: var(--text-muted);">Loading accounts...</div>
+      </div>
+    </div>
+
+    <!-- Proxy Quick Test & Usage -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <span>⚡ Local OpenAI Proxy Playground & Configuration</span>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px;">
+        <!-- Left: Playground -->
+        <div class="proxy-box">
+          <div style="font-size: 13px; font-weight: 600; color: #fff;">Test Streaming Completion (Live)</div>
+          <div class="playground-input-group">
+            <input type="text" id="testPrompt" value="Explain quantum computing in 2 sentences." placeholder="Enter test prompt..." />
+            <button class="btn-primary" id="btnTestPrompt" onclick="sendTestPrompt()">Send</button>
+          </div>
+          <div class="stream-output" id="streamOutput">Click "Send" to test streaming response through your local proxy...</div>
+        </div>
+
+        <!-- Right: Code Snippet -->
+        <div class="proxy-box">
+          <div style="font-size: 13px; font-weight: 600; color: #fff;">Connect Cursor / Continue / Python</div>
+          <div class="code-snippet">
+<button class="copy-btn" onclick="copySnippet()">Copy</button>
+# Cursor / Continue / Cline Settings:
+Base URL: http://127.0.0.1:8080/v1
+API Key:  dummy-key
+Model:    gemini-3.8-flash (or gemini-3.1-pro)
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Add Account Modal -->
+  <div class="modal-overlay" id="addAccountModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span>Add Google Account</span>
+        <button class="close-modal" onclick="closeModal('addAccountModal')">&times;</button>
+      </div>
+      <p style="font-size: 13px; color: var(--text-muted);">
+        Authenticate with Google to add your account to the pool.
+      </p>
+
+      <button class="btn-primary" style="justify-content: center; padding: 12px;" onclick="triggerBrowserLogin()">
+        🌐 Open Google Login in Browser
+      </button>
+
+      <div style="position: relative; text-align: center; margin: 10px 0;">
+        <span style="font-size: 11px; color: var(--text-muted); background: #111827; padding: 0 8px;">OR PASTE AUTH CODE / URL</span>
+      </div>
+
+      <input type="text" id="manualAuthCode" placeholder="Paste redirected callback URL or code here..." />
+      <button class="btn-secondary" style="justify-content: center;" onclick="submitManualAuthCode()">Submit Code</button>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span>Settings & Bot Alerts</span>
+        <button class="close-modal" onclick="closeModal('settingsModal')">&times;</button>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <label style="font-size: 12px; color: var(--text-muted); font-weight: 600;">
+          Auto-Switch Threshold (% Quota Remaining)
+          <input type="number" id="settingThreshold" min="1" max="50" style="margin-top: 4px;" />
+        </label>
+
+        <label style="font-size: 12px; color: var(--text-muted); font-weight: 600;">
+          Auto-Switching Enabled
+          <select id="settingAutoSwitch" style="width: 100%; margin-top: 4px; background: #020617; border: 1px solid #334155; color: #fff; padding: 10px; border-radius: 8px;">
+            <option value="true">Enabled</option>
+            <option value="false">Disabled</option>
+          </select>
+        </label>
+
+        <label style="font-size: 12px; color: var(--text-muted); font-weight: 600;">
+          Telegram Bot Token
+          <input type="text" id="settingTgToken" placeholder="123456789:ABCdefGhIJK..." style="margin-top: 4px;" />
+        </label>
+
+        <label style="font-size: 12px; color: var(--text-muted); font-weight: 600;">
+          Telegram Chat ID
+          <input type="text" id="settingTgChatId" placeholder="987654321" style="margin-top: 4px;" />
+        </label>
+      </div>
+
+      <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px;">
+        <button class="btn-secondary" onclick="sendTestTelegramAlert()">🔔 Test Alert</button>
+        <button class="btn-primary" onclick="saveSettings()">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast">Operation Successful</div>
+
+  <script>
+    let currentData = null;
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    function openModal(id) { document.getElementById(id).style.display = 'flex'; }
+    function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+    function openAddAccountModal() { openModal('addAccountModal'); }
+    function openSettingsModal() {
+      if (currentData?.config) {
+        document.getElementById('settingThreshold').value = currentData.config.depletionThresholdPercent ?? 5;
+        document.getElementById('settingAutoSwitch').value = currentData.config.autoSwitchEnabled ? 'true' : 'false';
+        document.getElementById('settingTgToken').value = currentData.config.telegramBotToken || '';
+        document.getElementById('settingTgChatId').value = currentData.config.telegramChatId || '';
+      }
+      openModal('settingsModal');
+    }
+
+    async function fetchStatus(showNotification = false) {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        currentData = data;
+        renderDashboard(data);
+        if (showNotification) showToast('Dashboard refreshed');
+      } catch (err) {
+        console.error('Failed to fetch status:', err);
+      }
+    }
+
+    function renderDashboard(data) {
+      // 1. Active IDE Account
+      const ideEl = document.getElementById('activeIdeEmail');
+      const ideSubEl = document.getElementById('activeIdeSource');
+      if (data.activeIdeAccount) {
+        ideEl.textContent = data.activeIdeAccount.email;
+        ideSubEl.textContent = data.activeIdeAccount.source || 'Antigravity IDE';
+      } else {
+        ideEl.textContent = 'None Detected';
+        ideSubEl.textContent = 'Antigravity not open';
+      }
+
+      // 2. Chat state
+      const chatTitleEl = document.getElementById('chatTitle');
+      const chatBadgeEl = document.getElementById('chatBadge');
+      const chatStatusEl = document.getElementById('chatStatus');
+      if (data.activeChat) {
+        chatTitleEl.textContent = data.activeChat.title || data.activeChat.conversationId;
+        chatBadgeEl.className = 'badge badge-warning';
+        chatBadgeEl.textContent = 'Turn Generating';
+        chatStatusEl.textContent = 'Auto-resumption armed';
+      } else {
+        chatTitleEl.textContent = 'No Active Turn';
+        chatBadgeEl.className = 'badge badge-success';
+        chatBadgeEl.textContent = 'Idle';
+        chatStatusEl.textContent = 'Standing by';
+      }
+
+      // 3. Pool Count
+      const pool = data.accounts || [];
+      const threshold = data.config?.depletionThresholdPercent ?? 5;
+      const healthy = pool.filter(a => {
+        const q5h = a.quota?.flash5h ?? 100;
+        const q5d = a.quota?.flash5d ?? 100;
+        return q5h > threshold && q5d > threshold;
+      });
+
+      document.getElementById('poolCount').textContent = `${pool.length} Accounts`;
+      document.getElementById('poolHealthyCount').textContent = `${healthy.length} Healthy`;
+      document.getElementById('poolThreshold').textContent = `Depletion alert: <= ${threshold}%`;
+
+      // 4. Accounts List
+      const listEl = document.getElementById('accountsList');
+      if (pool.length === 0) {
+        listEl.innerHTML = `
+          <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+            <p style="font-size: 15px; margin-bottom: 12px;">No Google accounts added yet.</p>
+            <button class="btn-primary" onclick="openAddAccountModal()">➕ Add Your First Account</button>
+          </div>
+        `;
+        return;
+      }
+
+      listEl.innerHTML = pool.map(acc => {
+        const isIdeActive = data.activeIdeAccount && data.activeIdeAccount.email.toLowerCase() === acc.email.toLowerCase();
+        const isPoolActive = acc.isActive;
+
+        const q5h = acc.quota?.flash5h ?? 100;
+        const q5d = acc.quota?.flash5d ?? 100;
+
+        const getFillClass = pct => pct <= threshold ? 'fill-red' : (pct <= 25 ? 'fill-yellow' : 'fill-green');
+
+        return `
+          <div class="account-row">
+            <div class="account-info">
+              <div class="account-email">
+                <span>${acc.email}</span>
+                ${isIdeActive ? '<span class="badge badge-success">In IDE</span>' : ''}
+                ${isPoolActive ? '<span class="badge badge-blue">Pool Active</span>' : ''}
+              </div>
+              <div style="font-size: 12px; color: var(--text-muted);">${acc.name || 'Google Account'}</div>
+            </div>
+
+            <div class="account-quotas">
+              <!-- 5-Hour Limit -->
+              <div class="quota-bar-wrapper">
+                <div class="quota-meta">
+                  <span>Gemini Flash 3.8 (5-Hour Rolling Limit)</span>
+                  <span style="font-weight: 700; color: #fff;">${q5h}%</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-fill ${getFillClass(q5h)}" style="width: ${q5h}%"></div>
+                </div>
+              </div>
+
+              <!-- 5-Day Limit -->
+              <div class="quota-bar-wrapper">
+                <div class="quota-meta">
+                  <span>Gemini Flash 3.8 (5-Day / Weekly Limit)</span>
+                  <span style="font-weight: 700; color: #fff;">${q5d}%</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-fill ${getFillClass(q5d)}" style="width: ${q5d}%"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="account-actions">
+              <button class="btn-secondary" style="font-size: 12px;" onclick="switchToAccount('${acc.email}')" title="Hot-switch Antigravity to this account">
+                ⚡ Switch
+              </button>
+              <button class="btn-danger" style="font-size: 12px; padding: 6px 10px;" onclick="deleteAccount('${acc.id}')" title="Remove account">
+                🗑️
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function checkAllQuotas() {
+      showToast('Checking quotas from Google Cloud Code...');
+      try {
+        const res = await fetch('/api/check', { method: 'POST' });
+        const data = await res.json();
+        showToast('Quotas refreshed successfully');
+        fetchStatus();
+      } catch (err) {
+        showToast('Failed to refresh quotas');
+      }
+    }
+
+    async function switchToAccount(email) {
+      if (!confirm(`Switch Antigravity 2.0 to ${email}?`)) return;
+      showToast(`Switching to ${email}...`);
+      try {
+        const res = await fetch('/api/switch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          showToast(`Successfully switched to ${email}`);
+          fetchStatus();
+        } else {
+          showToast(`Switch failed: ${data.error}`);
+        }
+      } catch (err) {
+        showToast(`Switch error: ${err.message}`);
+      }
+    }
+
+    async function deleteAccount(id) {
+      if (!confirm('Remove this account from the pool?')) return;
+      try {
+        await fetch('/api/accounts/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id })
+        });
+        showToast('Account removed');
+        fetchStatus();
+      } catch (err) {
+        showToast('Failed to remove account');
+      }
+    }
+
+    async function saveSettings() {
+      const threshold = parseInt(document.getElementById('settingThreshold').value, 10);
+      const autoSwitch = document.getElementById('settingAutoSwitch').value === 'true';
+      const tgToken = document.getElementById('settingTgToken').value.trim();
+      const tgChatId = document.getElementById('settingTgChatId').value.trim();
+
+      try {
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            depletionThresholdPercent: threshold,
+            autoSwitchEnabled: autoSwitch,
+            telegramBotToken: tgToken,
+            telegramChatId: tgChatId
+          })
+        });
+        closeModal('settingsModal');
+        showToast('Settings saved successfully');
+        fetchStatus();
+      } catch (err) {
+        showToast('Failed to save settings');
+      }
+    }
+
+    async function sendTestTelegramAlert() {
+      showToast('Sending test Telegram notification...');
+      try {
+        const res = await fetch('/api/notify/test', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          showToast('Telegram alert sent successfully!');
+        } else {
+          showToast(`Telegram alert failed: ${data.error}`);
+        }
+      } catch (err) {
+        showToast('Telegram network error');
+      }
+    }
+
+    async function triggerBrowserLogin() {
+      try {
+        const res = await fetch('/api/auth/url');
+        const data = await res.json();
+        if (data.url) {
+          window.open(data.url, '_blank');
+          showToast('Opened Google sign-in. After login, paste code below if needed.');
+        }
+      } catch (err) {
+        showToast('Failed to generate login URL');
+      }
+    }
+
+    async function submitManualAuthCode() {
+      const input = document.getElementById('manualAuthCode').value.trim();
+      if (!input) return;
+      showToast('Exchanging code...');
+      try {
+        const res = await fetch('/api/auth/code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: input })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          closeModal('addAccountModal');
+          document.getElementById('manualAuthCode').value = '';
+          showToast(`Account added: ${data.account.email}`);
+          fetchStatus();
+        } else {
+          showToast(`Enrollment failed: ${data.error}`);
+        }
+      } catch (err) {
+        showToast('Error submitting code');
+      }
+    }
+
+    async function sendTestPrompt() {
+      const prompt = document.getElementById('testPrompt').value.trim();
+      const outputEl = document.getElementById('streamOutput');
+      const btn = document.getElementById('btnTestPrompt');
+
+      if (!prompt) return;
+      btn.disabled = true;
+      outputEl.textContent = 'Connecting to local OpenAI proxy...\n';
+
+      try {
+        const res = await fetch('/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gemini-3.8-flash',
+            messages: [{ role: 'user', content: prompt }],
+            stream: true
+          })
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          outputEl.textContent = `Error HTTP ${res.status}: ${errText}`;
+          btn.disabled = false;
+          return;
+        }
+
+        outputEl.textContent = '';
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const payload = line.slice(6).trim();
+              if (payload === '[DONE]') break;
+              try {
+                const parsed = JSON.parse(payload);
+                const delta = parsed?.choices?.[0]?.delta?.content;
+                if (delta) {
+                  outputEl.textContent += delta;
+                  outputEl.scrollTop = outputEl.scrollHeight;
+                }
+              } catch {}
+            }
+          }
+        }
+      } catch (err) {
+        outputEl.textContent = `Stream error: ${err.message}`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function copySnippet() {
+      const text = `Base URL: http://127.0.0.1:8080/v1\nAPI Key: dummy-key\nModel: gemini-3.8-flash`;
+      navigator.clipboard.writeText(text);
+      showToast('Copied settings to clipboard');
+    }
+
+    // Auto-refresh every 10 seconds
+    fetchStatus();
+    setInterval(fetchStatus, 10000);
+  </script>
+</body>
+</html>

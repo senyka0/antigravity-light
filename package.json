@@ -1,0 +1,21 @@
+{
+  "name": "antigravity-light",
+  "version": "1.0.0",
+  "description": "Lightweight, cross-platform Antigravity account manager, quota auto-switcher, and local OpenAI proxy",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "antigravity-light": "./bin/cli.js"
+  },
+  "scripts": {
+    "start": "node src/index.js start",
+    "cli": "node src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": ["antigravity", "openai-proxy", "gemini", "quota-switcher", "cross-platform"],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
