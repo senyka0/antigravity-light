@@ -201,3 +201,11 @@ test('10. ProxyServer /v1/chat/completions streams SSE response live', async () 
   }
 });
 
+test('11. ChatResumer resolves DevTools port and candidates correctly', () => {
+  const candidates = AppPaths.getDevToolsPortFileCandidates();
+  assert.ok(Array.isArray(candidates) && candidates.length > 0);
+  const devToolsFile = AppPaths.getDevToolsPortFile();
+  assert.ok(devToolsFile, 'Should resolve DevToolsActivePort candidate');
+});
+
+

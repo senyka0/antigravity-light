@@ -94,6 +94,29 @@ export class AppPaths {
   }
 
   /**
+   * DevTools Active Port file candidates across platforms
+   */
+  static getDevToolsPortFileCandidates() {
+    const candidates = [];
+    if (isWindows) {
+      const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+      const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+      candidates.push(path.join(appData, 'Antigravity', 'DevToolsActivePort'));
+      candidates.push(path.join(appData, 'Antigravity IDE', 'DevToolsActivePort'));
+      candidates.push(path.join(localAppData, 'Antigravity', 'DevToolsActivePort'));
+    } else {
+      candidates.push(path.join(os.homedir(), '.config', 'Antigravity', 'DevToolsActivePort'));
+      candidates.push(path.join(os.homedir(), '.config', 'Antigravity IDE', 'DevToolsActivePort'));
+    }
+    return candidates;
+  }
+
+  static getDevToolsPortFile() {
+    const candidates = this.getDevToolsPortFileCandidates();
+    return candidates.find((p) => fs.existsSync(p)) || candidates[0];
+  }
+
+  /**
    * Resolved path to `agy` CLI binary
    */
   static getAgyCli() {

@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { spawn } from 'node:child_process';
 import { AppPaths } from './paths.js';
 
 export class ChatResumer {
@@ -54,88 +53,203 @@ export class ChatResumer {
       } catch {}
     }
 
+    // 3. Fallback: check most recently modified conversation
+    if (fs.existsSync(dbPath)) {
+      try {
+        const db = new DatabaseSync(dbPath, { readOnly: true });
+        try {
+          const row = db
+            .prepare(
+              `SELECT conversation_id, title, status 
+               FROM conversation_summaries 
+               ORDER BY last_modified_time DESC 
+               LIMIT 1`,
+            )
+            .get();
+
+          if (row && row.conversation_id) {
+            return {
+              conversationId: row.conversation_id,
+              title: row.title || 'Recent Conversation',
+              status: row.status,
+            };
+          }
+        } finally {
+          db.close();
+        }
+      } catch {}
+    }
+
     return null;
   }
 
   /**
-   * Builds the arguments for `agy` to resume the conversation in Antigravity
+   * Resumes conversation directly in Antigravity 2.0 UI via Chrome DevTools Protocol
    */
-  static getResumeArgs(conversationId) {
-    const args = ['--app_data_dir', 'antigravity'];
-    if (conversationId) {
-      args.push('--conversation', conversationId);
-    } else {
-      args.push('-c');
+  static async resumeInAntigravityUi(conversationId, promptText = 'continue') {
+    const devToolsFile = AppPaths.getDevToolsPortFile();
+    if (!devToolsFile || !fs.existsSync(devToolsFile)) {
+      return { ok: false, reason: 'DevToolsActivePort file not found' };
     }
-    args.push('-p', 'continue', '--dangerously-skip-permissions');
-    return args;
-  }
 
-  /**
-   * Schedules a detached background process to resume the chat after delayMs
-   * Survives even if language_server is killed or restarts.
-   */
-  static scheduleResume(conversationId, delayMs = 5000) {
-    const agyCli = AppPaths.getAgyCli();
-    const args = this.getResumeArgs(conversationId);
-
-    console.log(`[ChatResumer] Scheduling auto-resumption in ${delayMs}ms for: ${conversationId || 'latest chat'}`);
-
-    const helperScript = `
-      setTimeout(() => {
-        const { spawn } = require('node:child_process');
-        try {
-          const child = spawn(${JSON.stringify(agyCli)}, ${JSON.stringify(args)}, {
-            detached: true,
-            stdio: 'ignore'
-          });
-          child.unref();
-        } catch (e) {}
-      }, ${delayMs});
-    `;
-
+    let port;
     try {
-      const helper = spawn('node', ['-e', helperScript], {
-        detached: true,
-        stdio: 'ignore',
-      });
-      helper.unref();
-      return true;
+      const content = fs.readFileSync(devToolsFile, 'utf8').trim().split('\n');
+      port = parseInt(content[0], 10);
+      if (!port || isNaN(port)) {
+        return { ok: false, reason: 'Invalid DevTools port' };
+      }
     } catch (err) {
-      console.error('[ChatResumer] Failed to schedule resume helper:', err.message);
-      return false;
+      return { ok: false, reason: err.message };
     }
-  }
 
-  /**
-   * Resumes an interrupted chat immediately using `agy` CLI
-   */
-  static async resumeChat(conversationId) {
-    const agyCli = AppPaths.getAgyCli();
-    const args = this.getResumeArgs(conversationId);
+    let targets;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/json`);
+      if (!res.ok) return { ok: false, reason: `HTTP ${res.status} from DevTools` };
+      targets = await res.json();
+    } catch (err) {
+      return { ok: false, reason: `Cannot reach DevTools on port ${port}: ${err.message}` };
+    }
 
-    console.log(`[ChatResumer] Resuming interrupted chat with command: ${agyCli} ${args.join(' ')}`);
+    if (!Array.isArray(targets) || targets.length === 0) {
+      return { ok: false, reason: 'No DevTools targets found' };
+    }
+
+    // Find the Antigravity window target
+    let target = null;
+    if (conversationId) {
+      target = targets.find((t) => t.url && t.url.includes(conversationId));
+    }
+    if (!target) {
+      target = targets.find(
+        (t) => t.type === 'page' && (t.url.includes('/c/') || (t.title && t.title.includes('Antigravity'))),
+      );
+    }
+    if (!target) {
+      target = targets.find((t) => t.type === 'page');
+    }
+
+    if (!target || !target.webSocketDebuggerUrl) {
+      return { ok: false, reason: 'No Antigravity UI page found with WebSocket debugger' };
+    }
+
+    console.log(`[ChatResumer] Connecting to Antigravity 2.0 UI: "${target.title}"`);
 
     return new Promise((resolve) => {
-      try {
-        const child = spawn(agyCli, args, {
-          detached: true,
-          stdio: 'ignore',
-        });
+      let resolved = false;
+      const ws = new WebSocket(target.webSocketDebuggerUrl);
 
-        child.unref();
-        child.on('error', (err) => {
-          console.error('[ChatResumer] Failed to spawn agy resume process:', err.message);
-          resolve(false);
-        });
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          try { ws.close(); } catch {}
+          resolve({ ok: false, reason: 'Timeout waiting for Antigravity UI response' });
+        }
+      }, 10000);
 
-        // Give a moment to verify process didn't immediately crash
-        setTimeout(() => resolve(true), 500);
-      } catch (err) {
-        console.error('[ChatResumer] Error triggering chat resume:', err);
-        resolve(false);
-      }
+      ws.onopen = () => {
+        const expression = `
+          (() => {
+            // Check if already generating
+            const stopBtn = Array.from(document.querySelectorAll("button")).find(
+              b => b.innerText && b.innerText.trim().toLowerCase().includes("stop execution")
+            );
+            if (stopBtn) {
+              return JSON.stringify({ ok: true, status: "already_running" });
+            }
+
+            // Look for explicit Continue/Resume button
+            const continueBtn = Array.from(document.querySelectorAll("button")).find(
+              b => b.innerText && (b.innerText.trim().toLowerCase() === "continue" || b.innerText.trim().toLowerCase() === "resume")
+            );
+            if (continueBtn && !continueBtn.disabled) {
+              continueBtn.click();
+              return JSON.stringify({ ok: true, status: "clicked_continue_button" });
+            }
+
+            // Target the editor
+            const editor = document.querySelector("[contenteditable=\\"true\\"]");
+            const sendBtn = document.querySelector("button[aria-label=\\"Send message\\"]");
+            if (editor && sendBtn) {
+              editor.focus();
+              document.execCommand("selectAll", false, null);
+              document.execCommand("insertText", false, ${JSON.stringify(promptText)});
+              setTimeout(() => {
+                const btn = document.querySelector("button[aria-label=\\"Send message\\"]");
+                if (btn && !btn.disabled) {
+                  btn.click();
+                }
+              }, 150);
+              return JSON.stringify({ ok: true, status: "sent_prompt_in_ui", prompt: ${JSON.stringify(promptText)} });
+            }
+
+            return JSON.stringify({ ok: false, status: "editor_or_send_button_not_found" });
+          })()
+        `;
+
+        ws.send(JSON.stringify({
+          id: 100,
+          method: 'Runtime.evaluate',
+          params: { expression, returnByValue: true },
+        }));
+      };
+
+      ws.onmessage = (event) => {
+        if (resolved) return;
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.id === 100) {
+            resolved = true;
+            clearTimeout(timeout);
+            try { ws.close(); } catch {}
+            const val = msg.result?.result?.value;
+            const parsedVal = typeof val === 'string' ? JSON.parse(val) : val;
+            resolve(parsedVal || { ok: false, reason: 'Empty result from UI' });
+          }
+        } catch (err) {
+          resolved = true;
+          clearTimeout(timeout);
+          try { ws.close(); } catch {}
+          resolve({ ok: false, reason: err.message });
+        }
+      };
+
+      ws.onerror = (err) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timeout);
+        resolve({ ok: false, reason: err.message || 'WebSocket connection error' });
+      };
     });
   }
-}
 
+  /**
+   * Resumes an interrupted chat directly in the Antigravity 2.0 UI
+   */
+  static async resumeChat(conversationId, promptText = 'continue') {
+    console.log(`[ChatResumer] Resuming chat in Antigravity 2.0 UI for: ${conversationId || 'active'}`);
+
+    const uiResult = await this.resumeInAntigravityUi(conversationId, promptText);
+    if (uiResult && uiResult.ok) {
+      console.log(`[ChatResumer] ✓ Continued in Antigravity 2.0 UI (status: ${uiResult.status})`);
+      return true;
+    }
+
+    console.warn(`[ChatResumer] Could not resume in UI: ${uiResult?.reason || uiResult?.status}`);
+    return false;
+  }
+
+  /**
+   * Schedules resumption in Antigravity 2.0 UI after a delay (e.g. after language_server respawns)
+   */
+  static scheduleResume(conversationId, delayMs = 6000) {
+    console.log(`[ChatResumer] Scheduling UI resumption in ${delayMs}ms for: ${conversationId || 'active'}`);
+    setTimeout(() => {
+      this.resumeChat(conversationId, 'continue').catch((err) => {
+        console.error('[ChatResumer] Error in scheduled resumption:', err.message);
+      });
+    }, delayMs);
+    return true;
+  }
+}

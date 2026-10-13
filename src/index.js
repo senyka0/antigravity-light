@@ -159,6 +159,19 @@ async function main() {
       break;
     }
 
+    case 'resume': {
+      console.log('Attempting to resume conversation directly in Antigravity 2.0 UI...');
+      const active = ChatResumer.findActiveConversation();
+      const prompt = args[1] || 'continue';
+      const ok = await ChatResumer.resumeChat(active?.conversationId, prompt);
+      if (ok) {
+        console.log('✓ Successfully triggered continuation in Antigravity 2.0 UI!');
+      } else {
+        console.log('⚠️ Could not resume in Antigravity UI (ensure Antigravity is open).');
+      }
+      break;
+    }
+
     case 'config': {
       const key = args[1];
       const val = args[2];

@@ -77,6 +77,16 @@ export class ProxyServer {
           return;
         }
 
+        if (req.method === 'POST' && url.pathname === '/api/resume') {
+          const body = await this.readJsonBody(req);
+          const activeChat = ChatResumer.findActiveConversation();
+          const convoId = body.conversationId || activeChat?.conversationId;
+          const ok = await ChatResumer.resumeChat(convoId, body.prompt || 'continue');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok, conversationId: convoId }));
+          return;
+        }
+
         if (req.method === 'POST' && url.pathname === '/api/config') {
           const body = await this.readJsonBody(req);
           const updated = ConfigManager.update(body);

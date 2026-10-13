@@ -494,7 +494,10 @@
           <span class="badge badge-success" id="chatBadge">Idle</span>
         </div>
         <div class="metric-value" id="chatTitle">No Active Chat</div>
-        <div class="metric-sub" id="chatStatus">Auto-Resume Ready</div>
+        <div class="metric-sub" style="display: flex; justify-content: space-between; align-items: center;">
+          <span id="chatStatus">Auto-Resume Ready</span>
+          <button class="btn-primary" style="padding: 2px 7px; font-size: 11px;" onclick="resumeInUi()" title="Trigger continue prompt directly in Antigravity 2.0 UI">⚡ Continue in UI</button>
+        </div>
       </div>
 
       <!-- Registered Pool -->
@@ -983,6 +986,25 @@ Model:    gemini-3.8-flash (or gemini-3.1-pro)
       const text = `Base URL: http://127.0.0.1:8080/v1\nAPI Key: dummy-key\nModel: gemini-3.8-flash`;
       navigator.clipboard.writeText(text);
       showToast('Copied settings to clipboard');
+    }
+
+    async function resumeInUi() {
+      showToast('Triggering continuation in Antigravity 2.0 UI...');
+      try {
+        const res = await fetch('/api/resume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: 'continue' }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          showToast('✓ Successfully continued in Antigravity 2.0 UI!');
+        } else {
+          showToast('⚠️ Could not continue in UI (ensure Antigravity is open)');
+        }
+      } catch (err) {
+        showToast('Failed to trigger UI resumption: ' + err.message);
+      }
     }
 
     // Auto-refresh every 10 seconds
