@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { execSync } from 'node:child_process';
+import { AppPaths } from './paths.js';
 import { ConfigManager } from './config.js';
 import { AccountsStore } from './storage.js';
 import { QuotaChecker } from './quota.js';
@@ -73,6 +77,22 @@ export class MonitorDaemon {
     if (this.isRunning) return;
     this.isRunning = true;
 
+    // Track PID for cross-platform stop
+    try {
+      const pidFile = path.join(AppPaths.getLightAppDir(), 'daemon.pid');
+      fs.writeFileSync(pidFile, String(process.pid));
+      const cleanPid = () => {
+        try {
+          if (fs.existsSync(pidFile) && fs.readFileSync(pidFile, 'utf8').trim() === String(process.pid)) {
+            fs.unlinkSync(pidFile);
+          }
+        } catch {}
+      };
+      process.on('exit', cleanPid);
+      process.on('SIGINT', () => { cleanPid(); process.exit(0); });
+      process.on('SIGTERM', () => { cleanPid(); process.exit(0); });
+    } catch {}
+
     const config = ConfigManager.load();
 
     console.log(`\n============================================================`);
@@ -100,5 +120,33 @@ export class MonitorDaemon {
     }
     this.isRunning = false;
     console.log('[Daemon] Stopped.');
+  }
+
+  /**
+   * Cross-platform method to stop a running background daemon process
+   */
+  static stopDaemonProcess() {
+    const pidFile = path.join(AppPaths.getLightAppDir(), 'daemon.pid');
+    if (!fs.existsSync(pidFile)) {
+      console.log('No running daemon found (daemon.pid not present).');
+      return false;
+    }
+    try {
+      const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10);
+      if (pid) {
+        if (process.platform === 'win32') {
+          execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
+        } else {
+          process.kill(pid, 'SIGTERM');
+        }
+        try { fs.unlinkSync(pidFile); } catch {}
+        console.log(`[Daemon] Stopped process PID ${pid}.`);
+        return true;
+      }
+    } catch (err) {
+      try { fs.unlinkSync(pidFile); } catch {}
+      console.log(`Daemon process already stopped or could not terminate: ${err.message}`);
+    }
+    return false;
   }
 }

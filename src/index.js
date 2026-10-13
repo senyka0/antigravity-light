@@ -41,6 +41,11 @@ async function main() {
       break;
     }
 
+    case 'stop': {
+      MonitorDaemon.stopDaemonProcess();
+      break;
+    }
+
     case 'proxy': {
       const config = ConfigManager.load();
       ProxyServer.start(config.proxyPort, config.proxyHost);
