@@ -58,13 +58,61 @@ export class ChatResumer {
   }
 
   /**
-   * Resumes an interrupted chat using `agy` CLI
+   * Builds the arguments for `agy` to resume the conversation in Antigravity
+   */
+  static getResumeArgs(conversationId) {
+    const args = ['--app_data_dir', 'antigravity'];
+    if (conversationId) {
+      args.push('--conversation', conversationId);
+    } else {
+      args.push('-c');
+    }
+    args.push('-p', 'continue', '--dangerously-skip-permissions');
+    return args;
+  }
+
+  /**
+   * Schedules a detached background process to resume the chat after delayMs
+   * Survives even if language_server is killed or restarts.
+   */
+  static scheduleResume(conversationId, delayMs = 5000) {
+    const agyCli = AppPaths.getAgyCli();
+    const args = this.getResumeArgs(conversationId);
+
+    console.log(`[ChatResumer] Scheduling auto-resumption in ${delayMs}ms for: ${conversationId || 'latest chat'}`);
+
+    const helperScript = `
+      setTimeout(() => {
+        const { spawn } = require('node:child_process');
+        try {
+          const child = spawn(${JSON.stringify(agyCli)}, ${JSON.stringify(args)}, {
+            detached: true,
+            stdio: 'ignore'
+          });
+          child.unref();
+        } catch (e) {}
+      }, ${delayMs});
+    `;
+
+    try {
+      const helper = spawn('node', ['-e', helperScript], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      helper.unref();
+      return true;
+    } catch (err) {
+      console.error('[ChatResumer] Failed to schedule resume helper:', err.message);
+      return false;
+    }
+  }
+
+  /**
+   * Resumes an interrupted chat immediately using `agy` CLI
    */
   static async resumeChat(conversationId) {
     const agyCli = AppPaths.getAgyCli();
-    const args = conversationId
-      ? ['--conversation', conversationId, '-p', 'continue']
-      : ['-c', '-p', 'continue'];
+    const args = this.getResumeArgs(conversationId);
 
     console.log(`[ChatResumer] Resuming interrupted chat with command: ${agyCli} ${args.join(' ')}`);
 
@@ -90,3 +138,4 @@ export class ChatResumer {
     });
   }
 }
+
