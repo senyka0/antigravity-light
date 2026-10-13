@@ -9,6 +9,9 @@
   },
   "scripts": {
     "start": "node src/index.js start",
+    "start:detached": "nohup node src/index.js start > ~/.antigravity-light/app.log 2>&1 &",
+    "ui:detached": "nohup node src/index.js ui > ~/.antigravity-light/app.log 2>&1 &",
+    "stop": "pkill -f 'node.*src/index.js'",
     "cli": "node src/index.js",
     "test": "node --test test/*.test.js"
   },
