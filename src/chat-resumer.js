@@ -5,16 +5,51 @@ import { AppPaths } from './paths.js';
 
 export class ChatResumer {
   /**
-   * Checks if there is any conversation actively running or generating in Antigravity
+   * Discovers which conversation is physically open on screen in Antigravity UI,
+   * falling back to the most recently modified conversation in SQLite.
+   */
+  static async getActiveConversation() {
+    // 1. Check DevTools to find what conversation is physically displayed on screen in Antigravity UI
+    try {
+      const devToolsFile = AppPaths.getDevToolsPortFile();
+      if (devToolsFile && fs.existsSync(devToolsFile)) {
+        const port = parseInt(fs.readFileSync(devToolsFile, 'utf8').split('\n')[0], 10);
+        if (port) {
+          const res = await fetch(`http://127.0.0.1:${port}/json`);
+          if (res.ok) {
+            const targets = await res.json();
+            const page = targets.find((t) => t.type === 'page' && t.url && t.url.includes('/c/'));
+            if (page) {
+              const match = page.url.match(/\/c\/([a-zA-Z0-9-]+)/);
+              if (match) {
+                return {
+                  conversationId: match[1],
+                  title: (page.title || 'Active Conversation').replace(/ - Antigravity.*$/, ''),
+                  status: 'CASCADE_RUN_STATUS_RUNNING',
+                  source: 'UI_SCREEN',
+                };
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // 2. Fallback to SQLite
+    return this.findActiveConversation();
+  }
+
+  /**
+   * Synchronously checks SQLite for the active or most recently modified conversation
    */
   static findActiveConversation() {
-    // 1. Check conversation_summaries.db
     const dbPath = AppPaths.getConversationsDb();
     if (fs.existsSync(dbPath)) {
       try {
         const db = new DatabaseSync(dbPath, { readOnly: true });
         try {
-          const row = db
+          // Check actively running or not idle first
+          let row = db
             .prepare(
               `SELECT conversation_id, title, status, not_fully_idle 
                FROM conversation_summaries 
@@ -24,48 +59,17 @@ export class ChatResumer {
             )
             .get();
 
-          if (row && row.conversation_id) {
-            return {
-              conversationId: row.conversation_id,
-              title: row.title || 'Active Conversation',
-              status: row.status,
-            };
+          // If no actively running flag, take the most recently active conversation
+          if (!row) {
+            row = db
+              .prepare(
+                `SELECT conversation_id, title, status 
+                 FROM conversation_summaries 
+                 ORDER BY last_modified_time DESC 
+                 LIMIT 1`,
+              )
+              .get();
           }
-        } finally {
-          db.close();
-        }
-      } catch {}
-    }
-
-    // 2. Check presence lock files
-    const presenceDir = AppPaths.getPresenceDir();
-    if (fs.existsSync(presenceDir)) {
-      try {
-        const files = fs.readdirSync(presenceDir).filter((f) => f.endsWith('.lock'));
-        if (files.length > 0) {
-          const conversationId = path.basename(files[0], '.lock');
-          return {
-            conversationId,
-            title: 'Active Conversation (Locked)',
-            status: 'CASCADE_RUN_STATUS_RUNNING',
-          };
-        }
-      } catch {}
-    }
-
-    // 3. Fallback: check most recently modified conversation
-    if (fs.existsSync(dbPath)) {
-      try {
-        const db = new DatabaseSync(dbPath, { readOnly: true });
-        try {
-          const row = db
-            .prepare(
-              `SELECT conversation_id, title, status 
-               FROM conversation_summaries 
-               ORDER BY last_modified_time DESC 
-               LIMIT 1`,
-            )
-            .get();
 
           if (row && row.conversation_id) {
             return {

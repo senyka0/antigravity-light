@@ -48,7 +48,7 @@ export class ProxyServer {
         if (req.method === 'GET' && url.pathname === '/api/status') {
           const accounts = AccountsStore.getAccounts();
           const activeIdeAccount = AccountDetector.detectActiveAccount();
-          const activeChat = ChatResumer.findActiveConversation();
+          const activeChat = await ChatResumer.getActiveConversation();
           const config = ConfigManager.load();
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ accounts, activeIdeAccount, activeChat, config }));
@@ -79,7 +79,7 @@ export class ProxyServer {
 
         if (req.method === 'POST' && url.pathname === '/api/resume') {
           const body = await this.readJsonBody(req);
-          const activeChat = ChatResumer.findActiveConversation();
+          const activeChat = await ChatResumer.getActiveConversation();
           const convoId = body.conversationId || activeChat?.conversationId;
           const ok = await ChatResumer.resumeChat(convoId, body.prompt || 'continue');
           res.writeHead(200, { 'Content-Type': 'application/json' });

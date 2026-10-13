@@ -135,10 +135,10 @@ export class AccountSwitcher {
     const freshAccount = await AuthService.ensureValidToken(targetAccount);
 
     // 2. Check if a conversation is actively running BEFORE restarting language_server
-    const activeChat = ChatResumer.findActiveConversation();
+    const activeChat = await ChatResumer.getActiveConversation();
     if (activeChat) {
       console.log(
-        `[AccountSwitcher] Detected running chat: ${activeChat.title} (${activeChat.conversationId})`,
+        `[AccountSwitcher] Detected active chat: ${activeChat.title} (${activeChat.conversationId})`,
       );
     }
 
