@@ -79,7 +79,7 @@ test('6. ProxyServer handles OpenAI payload translation', () => {
 
   const geminiPayload = ProxyServer.convertToGeminiPayload(openAiRequest, 'test-project');
   assert.equal(geminiPayload.project, 'test-project');
-  assert.equal(geminiPayload.model, 'gemini-3.8-flash');
+  assert.equal(geminiPayload.model, 'gemini-3.8-flash-tiered');
   assert.equal(geminiPayload.request.systemInstruction.parts[0].text, 'Be concise.');
   assert.equal(geminiPayload.request.contents.length, 3);
   assert.equal(geminiPayload.request.contents[0].role, 'user');
@@ -121,6 +121,81 @@ test('8. Web Dashboard serves HTML and responds to /api/status', async () => {
     assert.ok(Array.isArray(data.accounts));
     assert.ok(data.activeIdeAccount);
     assert.ok(data.config);
+  } finally {
+    server.close();
+  }
+});
+
+test('9. ProxyServer /v1/chat/completions responds live with valid response', async () => {
+  const testPort = 18082;
+  const server = ProxyServer.start(testPort, '127.0.0.1');
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${testPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gemini-3.8-flash',
+        messages: [{ role: 'user', content: 'Say pong' }],
+        stream: false,
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.object, 'chat.completion');
+    assert.ok(data.choices && data.choices.length > 0);
+    assert.ok(typeof data.choices[0].message.content === 'string');
+    assert.ok(data.choices[0].message.content.length > 0);
+  } finally {
+    server.close();
+  }
+});
+
+test('10. ProxyServer /v1/chat/completions streams SSE response live', async () => {
+  const testPort = 18083;
+  const server = ProxyServer.start(testPort, '127.0.0.1');
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${testPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gemini-3.8-flash',
+        messages: [{ role: 'user', content: 'Say hello in 3 words' }],
+        stream: true,
+      }),
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.headers.get('content-type').includes('text/event-stream'));
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let chunks = [];
+    let receivedDone = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value, { stream: true });
+      for (const line of text.split('\n')) {
+        if (line.startsWith('data: ')) {
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]') {
+            receivedDone = true;
+          } else {
+            try {
+              const parsed = JSON.parse(payload);
+              if (parsed.choices?.[0]?.delta?.content) {
+                chunks.push(parsed.choices[0].delta.content);
+              }
+            } catch {}
+          }
+        }
+      }
+    }
+
+    assert.ok(receivedDone, 'Should receive [DONE] SSE chunk');
+    assert.ok(chunks.length > 0, 'Should receive streamed text chunks');
   } finally {
     server.close();
   }

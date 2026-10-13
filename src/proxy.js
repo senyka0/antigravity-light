@@ -227,9 +227,12 @@ export class ProxyServer {
   static handleModels(res) {
     const models = [
       'gemini-3.8-flash',
-      'gemini-3.7-flash',
-      'gemini-3.1-pro',
+      'gemini-3.8-flash-tiered',
+      'gemini-2.5-flash',
+      'gemini-3-flash',
+      'claude-sonnet-4-6',
       'claude-3-7-sonnet',
+      'gpt-oss-120b-medium',
       'gpt-4o',
     ];
 
@@ -248,6 +251,42 @@ export class ProxyServer {
   }
 
   /**
+   * Normalizes client model names to valid internal backend model IDs
+   */
+  static mapToBackendModel(model) {
+    if (!model) return 'gemini-3.8-flash-tiered';
+    const m = String(model).trim().toLowerCase();
+    if (m === 'gemini-3.8-flash' || m === 'gemini-3.8-flash-high' || m === 'gemini-3.8-flash-tiered') {
+      return 'gemini-3.8-flash-tiered';
+    }
+    if (m.includes('3.8-flash')) {
+      return 'gemini-3.8-flash-tiered';
+    }
+    if (m === 'gpt-4o' || m === 'gpt-4' || m === 'gpt-3.5-turbo') {
+      return 'gemini-3.8-flash-tiered';
+    }
+    if (m === 'claude-3-7-sonnet' || m === 'claude-3-5-sonnet' || m === 'claude-sonnet-4-6') {
+      return 'claude-sonnet-4-6';
+    }
+    if (m === 'claude-opus-4-6-thinking' || m === 'claude-3-opus') {
+      return 'claude-opus-4-6-thinking';
+    }
+    if (m === 'gemini-2.5-flash' || m === 'gemini-2.5-flash-lite') {
+      return 'gemini-2.5-flash';
+    }
+    if (m === 'gemini-3-flash' || m === 'gemini-3.7-flash' || m === 'gemini-3-flash-agent') {
+      return 'gemini-3-flash';
+    }
+    if (m === 'gemini-3.1-pro' || m === 'gemini-pro' || m === 'gemini-2.5-pro') {
+      return 'gemini-3-flash';
+    }
+    if (m === 'gpt-oss-120b-medium') {
+      return 'gpt-oss-120b-medium';
+    }
+    return model;
+  }
+
+  /**
    * Translates OpenAI chat request to Gemini Cloud Code format
    */
   static convertToGeminiPayload(openAiBody, projectId) {
@@ -255,16 +294,12 @@ export class ProxyServer {
     const systemMsg = messages.find((m) => m.role === 'system');
     const chatMsgs = messages.filter((m) => m.role !== 'system');
 
-    let model = openAiBody.model || 'gemini-3.8-flash';
-    // Map common aliases
-    if (model === 'gpt-4o' || model === 'gpt-4' || model === 'claude-3-5-sonnet') {
-      model = 'gemini-3.8-flash';
-    }
+    const backendModel = this.mapToBackendModel(openAiBody.model);
 
     return {
       project: projectId || undefined,
       requestId: randomUUID(),
-      model,
+      model: backendModel,
       userAgent: AppPaths.getUserAgent(),
       request: {
         ...(systemMsg
@@ -314,6 +349,11 @@ export class ProxyServer {
     const excludedIds = new Set();
     const maxRetries = 3;
 
+    const cloudCodeHosts = [
+      'https://daily-cloudcode-pa.googleapis.com',
+      'https://cloudcode-pa.googleapis.com',
+    ];
+
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       let account;
       try {
@@ -325,46 +365,83 @@ export class ProxyServer {
       }
 
       const geminiPayload = this.convertToGeminiPayload(openAiBody, account.projectId);
-      const endpoint = isStream
-        ? 'https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse'
-        : 'https://cloudcode-pa.googleapis.com/v1internal:generateContent';
-
       const headers = {
         Authorization: `Bearer ${account.accessToken}`,
         'Content-Type': 'application/json',
         'User-Agent': AppPaths.getUserAgent(),
       };
 
+      let upstreamRes = null;
+      let lastErrText = '';
+
+      for (const host of cloudCodeHosts) {
+        const endpoint = isStream
+          ? `${host}/v1internal:streamGenerateContent?alt=sse`
+          : `${host}/v1internal:generateContent`;
+
+        try {
+          const r = await fetch(endpoint, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(geminiPayload),
+          });
+
+          if (r.status === 401) {
+            console.warn(`[ProxyServer] Token for ${account.email} rejected (401). Refreshing...`);
+            await AuthService.refreshAccessToken(account);
+            upstreamRes = r;
+            break;
+          }
+
+          if (r.status === 429) {
+            console.warn(`[ProxyServer] Account ${account.email} rate-limited on ${host} (429).`);
+            upstreamRes = r;
+            break;
+          }
+
+          if (r.ok) {
+            upstreamRes = r;
+            break;
+          }
+
+          lastErrText = await r.text();
+          console.warn(`[ProxyServer] ${host} responded with ${r.status}: ${lastErrText.slice(0, 120)}`);
+          upstreamRes = r;
+        } catch (fetchErr) {
+          console.warn(`[ProxyServer] Network error contacting ${host}:`, fetchErr.message);
+        }
+      }
+
+      if (!upstreamRes) {
+        excludedIds.add(account.id);
+        continue;
+      }
+
+      // If token expired, retry after refresh
+      if (upstreamRes.status === 401) {
+        continue;
+      }
+
+      // If rate limited, rotate to next account
+      if (upstreamRes.status === 429) {
+        excludedIds.add(account.id);
+        continue;
+      }
+
+      if (!upstreamRes.ok) {
+        console.warn(`[ProxyServer] Attempt with ${account.email} failed: HTTP ${upstreamRes.status}`);
+        excludedIds.add(account.id);
+        continue;
+      }
+
       try {
-        const upstreamRes = await fetch(endpoint, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(geminiPayload),
-        });
-
-        // 401 Unauthorized -> Refresh token and retry
-        if (upstreamRes.status === 401) {
-          console.warn(`[ProxyServer] Token for ${account.email} was rejected (401). Refreshing...`);
-          await AuthService.refreshAccessToken(account);
-          continue;
-        }
-
-        // 429 Rate limited -> Rotate to next account
-        if (upstreamRes.status === 429) {
-          console.warn(`[ProxyServer] Account ${account.email} rate limited (429). Rotating to next account...`);
-          excludedIds.add(account.id);
-          continue;
-        }
-
-        if (!upstreamRes.ok) {
-          const errText = await upstreamRes.text();
-          throw new Error(`Upstream returned HTTP ${upstreamRes.status}: ${errText}`);
-        }
-
-        // Non-streaming response
+        // --- Non-streaming Response ---
         if (!isStream) {
           const json = await upstreamRes.json();
-          const text = json?.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+          const candidate = json?.response?.candidates?.[0];
+          const parts = candidate?.content?.parts || [];
+          const textParts = parts.filter((p) => !p.thought && typeof p.text === 'string').map((p) => p.text);
+          const text = textParts.length > 0 ? textParts.join('') : parts.map((p) => p.text || '').join('');
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(
@@ -377,15 +454,20 @@ export class ProxyServer {
                 {
                   index: 0,
                   message: { role: 'assistant', content: text },
-                  finish_reason: 'stop',
+                  finish_reason: (candidate?.finishReason || 'STOP').toLowerCase() === 'stop' ? 'stop' : (candidate?.finishReason || 'stop').toLowerCase(),
                 },
               ],
+              usage: {
+                prompt_tokens: json?.response?.usageMetadata?.promptTokenCount || 0,
+                completion_tokens: json?.response?.usageMetadata?.candidatesTokenCount || 0,
+                total_tokens: json?.response?.usageMetadata?.totalTokenCount || 0,
+              },
             }),
           );
           return;
         }
 
-        // Streaming SSE response
+        // --- Streaming SSE Response ---
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
@@ -395,6 +477,11 @@ export class ProxyServer {
         const reader = upstreamRes.body.getReader();
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
+        const streamId = `chatcmpl-${randomUUID()}`;
+
+        res.on('close', () => {
+          reader.cancel().catch(() => {});
+        });
 
         while (true) {
           const { done, value } = await reader.read();
@@ -405,57 +492,100 @@ export class ProxyServer {
           buffer = lines.pop() || '';
 
           for (const line of lines) {
-            if (line.startsWith('data: ')) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data: ')) {
               try {
-                const parsed = JSON.parse(line.slice(6));
-                const deltaText = parsed?.response?.candidates?.[0]?.content?.parts?.[0]?.text;
-                if (deltaText) {
-                  const chunk = {
-                    id: `chatcmpl-${randomUUID()}`,
-                    object: 'chat.completion.chunk',
-                    created: Math.floor(Date.now() / 1000),
-                    model: openAiBody.model || 'gemini-3.8-flash',
-                    choices: [
-                      {
-                        index: 0,
-                        delta: { content: deltaText },
-                        finish_reason: null,
-                      },
-                    ],
-                  };
-                  res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+                const parsed = JSON.parse(trimmed.slice(6));
+                const candidate = parsed?.response?.candidates?.[0];
+                const parts = candidate?.content?.parts || [];
+                for (const part of parts) {
+                  if (!part.thought && typeof part.text === 'string' && part.text.length > 0) {
+                    const chunk = {
+                      id: streamId,
+                      object: 'chat.completion.chunk',
+                      created: Math.floor(Date.now() / 1000),
+                      model: openAiBody.model || 'gemini-3.8-flash',
+                      choices: [
+                        {
+                          index: 0,
+                          delta: { content: part.text },
+                          finish_reason: null,
+                        },
+                      ],
+                    };
+                    res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+                  }
                 }
               } catch {}
             }
           }
         }
 
+        const finishChunk = {
+          id: streamId,
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: openAiBody.model || 'gemini-3.8-flash',
+          choices: [
+            {
+              index: 0,
+              delta: {},
+              finish_reason: 'stop',
+            },
+          ],
+        };
+        res.write(`data: ${JSON.stringify(finishChunk)}\n\n`);
         res.write('data: [DONE]\n\n');
         res.end();
         return;
-      } catch (err) {
-        console.warn(`[ProxyServer] Attempt with ${account.email} failed:`, err.message);
-        excludedIds.add(account.id);
+      } catch (streamErr) {
+        console.warn(`[ProxyServer] Streaming error with ${account.email}:`, streamErr.message);
+        if (!res.headersSent) {
+          excludedIds.add(account.id);
+          continue;
+        } else {
+          res.end();
+          return;
+        }
       }
     }
 
-    res.writeHead(502, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: { message: 'All upstream attempts failed', type: 'upstream_error' } }));
+    if (!res.headersSent) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'All upstream attempts failed', type: 'upstream_error' } }));
+    }
   }
 
   static async handleNativeGemini(pathname, search, body, res) {
     const account = await this.getEligibleAccount();
-    const endpoint = `https://cloudcode-pa.googleapis.com${pathname}${search}`;
+    const hosts = [
+      'https://daily-cloudcode-pa.googleapis.com',
+      'https://cloudcode-pa.googleapis.com',
+    ];
 
-    const upstreamRes = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${account.accessToken}`,
-        'Content-Type': 'application/json',
-        'User-Agent': AppPaths.getUserAgent(),
-      },
-      body: JSON.stringify(body),
-    });
+    let upstreamRes = null;
+    for (const host of hosts) {
+      try {
+        const endpoint = `${host}${pathname}${search || ''}`;
+        const resp = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${account.accessToken}`,
+            'Content-Type': 'application/json',
+            'User-Agent': AppPaths.getUserAgent(),
+          },
+          body: JSON.stringify(body),
+        });
+        upstreamRes = resp;
+        if (resp.ok) break;
+      } catch (err) {}
+    }
+
+    if (!upstreamRes) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'Failed to contact Gemini upstream', type: 'upstream_error' } }));
+      return;
+    }
 
     res.writeHead(upstreamRes.status, {
       'Content-Type': upstreamRes.headers.get('content-type') || 'application/json',
