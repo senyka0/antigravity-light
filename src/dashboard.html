@@ -197,6 +197,30 @@
     .badge-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
     .badge-blue { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
 
+    .reset-timer-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 1px 7px;
+      border-radius: 6px;
+      color: #94a3b8;
+      background: rgba(30, 41, 59, 0.7);
+      border: 1px solid rgba(51, 65, 85, 0.6);
+      font-variant-numeric: tabular-nums;
+    }
+    .reset-timer-badge.active-countdown {
+      color: #38bdf8;
+      background: rgba(14, 165, 233, 0.12);
+      border-color: rgba(56, 189, 248, 0.35);
+    }
+    .reset-timer-badge.full-quota {
+      color: #34d399;
+      background: rgba(16, 185, 129, 0.1);
+      border-color: rgba(16, 185, 129, 0.25);
+    }
+
     /* Section Cards */
     .card {
       background: var(--surface);
@@ -762,7 +786,10 @@ Model:    gemini-3.8-flash (or gemini-3.1-pro)
               <div class="quota-bar-wrapper">
                 <div class="quota-meta">
                   <span>Gemini Flash 3.8 (5-Hour Rolling Limit)</span>
-                  <span style="font-weight: 700; color: #fff;">${q5h}%</span>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span class="reset-timer-badge" data-reset="${acc.quota?.resetTime5h || ''}" data-pct="${q5h}"></span>
+                    <span style="font-weight: 700; color: #fff;">${q5h}%</span>
+                  </div>
                 </div>
                 <div class="progress-track">
                   <div class="progress-fill ${getFillClass(q5h)}" style="width: ${q5h}%"></div>
@@ -773,7 +800,10 @@ Model:    gemini-3.8-flash (or gemini-3.1-pro)
               <div class="quota-bar-wrapper">
                 <div class="quota-meta">
                   <span>Gemini Flash 3.8 (5-Day / Weekly Limit)</span>
-                  <span style="font-weight: 700; color: #fff;">${q5d}%</span>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span class="reset-timer-badge" data-reset="${acc.quota?.resetTime5d || ''}" data-pct="${q5d}"></span>
+                    <span style="font-weight: 700; color: #fff;">${q5d}%</span>
+                  </div>
                 </div>
                 <div class="progress-track">
                   <div class="progress-fill ${getFillClass(q5d)}" style="width: ${q5d}%"></div>
@@ -792,6 +822,7 @@ Model:    gemini-3.8-flash (or gemini-3.1-pro)
           </div>
         `;
       }).join('');
+      tickTimers();
     }
 
     async function checkAllQuotas() {
@@ -1006,6 +1037,56 @@ Model:    gemini-3.8-flash (or gemini-3.1-pro)
         showToast('Failed to trigger UI resumption: ' + err.message);
       }
     }
+
+    function formatTimeRemaining(resetTimeStr, pct) {
+      if (!resetTimeStr) {
+        return pct >= 100
+          ? { text: '✓ 100% Full', class: 'full-quota' }
+          : { text: 'Rolling window', class: '' };
+      }
+      const target = new Date(resetTimeStr).getTime();
+      const now = Date.now();
+      const diffMs = target - now;
+
+      if (diffMs <= 0) {
+        return pct >= 100
+          ? { text: '✓ 100% Full', class: 'full-quota' }
+          : { text: '🔄 Resetting...', class: 'active-countdown' };
+      }
+
+      const totalSecs = Math.floor(diffMs / 1000);
+      const days = Math.floor(totalSecs / 86400);
+      const hours = Math.floor((totalSecs % 86400) / 3600);
+      const mins = Math.floor((totalSecs % 3600) / 60);
+      const secs = totalSecs % 60;
+
+      let timeStr = '';
+      if (days > 0) {
+        timeStr = `${days}d ${hours}h ${mins}m`;
+      } else if (hours > 0) {
+        timeStr = `${hours}h ${mins}m ${secs}s`;
+      } else {
+        timeStr = `${mins}m ${secs}s`;
+      }
+
+      return {
+        text: `⏳ Resets in ${timeStr}`,
+        class: 'active-countdown',
+      };
+    }
+
+    function tickTimers() {
+      const badges = document.querySelectorAll('.reset-timer-badge');
+      badges.forEach(badge => {
+        const resetStr = badge.getAttribute('data-reset');
+        const pct = parseInt(badge.getAttribute('data-pct') || '100', 10);
+        const res = formatTimeRemaining(resetStr, pct);
+        badge.textContent = res.text;
+        badge.className = 'reset-timer-badge ' + res.class;
+      });
+    }
+
+    setInterval(tickTimers, 1000);
 
     // Auto-refresh every 10 seconds
     fetchStatus();

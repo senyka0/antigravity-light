@@ -124,6 +124,10 @@ export class QuotaChecker {
 
     let flash5h = 100;
     let flash5d = 100;
+    let resetTime5h = null;
+    let resetTime5d = null;
+    let resetDesc5h = null;
+    let resetDesc5d = null;
     const modelPercentages = {};
 
     // 1. Parse Quota Groups and Buckets (5h & 5d/weekly windows)
@@ -165,9 +169,21 @@ export class QuotaChecker {
 
           if (is5h) {
             flash5h = Math.min(flash5h, pct);
+            if (bucket.resetTime) {
+              resetTime5h = bucket.resetTime;
+            }
+            if (bucket.description) {
+              resetDesc5h = bucket.description;
+            }
           }
           if (is5d) {
             flash5d = Math.min(flash5d, pct);
+            if (bucket.resetTime) {
+              resetTime5d = bucket.resetTime;
+            }
+            if (bucket.description) {
+              resetDesc5d = bucket.description;
+            }
           }
         }
       }
@@ -195,6 +211,10 @@ export class QuotaChecker {
     const quotaResult = {
       flash5h,
       flash5d,
+      resetTime5h,
+      resetTime5d,
+      resetDesc5h,
+      resetDesc5d,
       models: modelPercentages,
       lastChecked: Date.now(),
       isDepleted,
