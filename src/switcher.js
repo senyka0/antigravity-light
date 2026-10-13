@@ -136,9 +136,13 @@ export class AccountSwitcher {
 
     // 2. Check if a conversation is actively running BEFORE restarting language_server
     const activeChat = await ChatResumer.getActiveConversation();
-    if (activeChat) {
+    if (activeChat?.isRunning) {
       console.log(
-        `[AccountSwitcher] Detected active chat: ${activeChat.title} (${activeChat.conversationId})`,
+        `[AccountSwitcher] Detected in-flight generation in chat: ${activeChat.title} (${activeChat.conversationId})`,
+      );
+    } else if (activeChat) {
+      console.log(
+        `[AccountSwitcher] Active chat window is idle: ${activeChat.title} (${activeChat.conversationId})`,
       );
     }
 
@@ -158,13 +162,15 @@ export class AccountSwitcher {
     await new Promise((resolve) => setTimeout(resolve, 4000));
     console.log('[AccountSwitcher] Language server reloaded with fresh credentials!');
 
-    // 7. Resume interrupted conversation directly in Antigravity 2.0 UI
-    if (activeChat?.conversationId) {
-      console.log(`[AccountSwitcher] Resuming conversation in Antigravity 2.0 UI: ${activeChat.title} (${activeChat.conversationId})`);
+    // 7. Resume interrupted conversation directly in Antigravity 2.0 UI ONLY IF IT WAS RUNNING
+    if (activeChat?.conversationId && activeChat?.isRunning) {
+      console.log(`[AccountSwitcher] Resuming interrupted conversation in Antigravity 2.0 UI: ${activeChat.title} (${activeChat.conversationId})`);
       const resumed = await ChatResumer.resumeChat(activeChat.conversationId, 'continue');
       if (resumed) {
         resumedChatId = activeChat.conversationId;
       }
+    } else {
+      console.log('[AccountSwitcher] Chat is idle. No automatic continuation needed.');
     }
 
     // 8. Refresh and check new account quota

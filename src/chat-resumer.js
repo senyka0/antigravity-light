@@ -7,6 +7,96 @@ export class ChatResumer {
   /**
    * Discovers which conversation is physically open on screen in Antigravity UI,
    * falling back to the most recently modified conversation in SQLite.
+  /**
+   * Fast probe to verify if the UI is actively generating a response
+   */
+  static checkUiGenerating(webSocketDebuggerUrl) {
+    if (!webSocketDebuggerUrl) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      let ws;
+      try {
+        ws = new WebSocket(webSocketDebuggerUrl);
+      } catch {
+        return resolve(false);
+      }
+
+      const tm = setTimeout(() => {
+        try { ws.close(); } catch {}
+        resolve(false);
+      }, 1000);
+
+      ws.onopen = () => {
+        const checkScript = `
+          (() => {
+            const cancelBtn = !!document.querySelector('button[aria-label="Cancel (Ctrl+D)"]');
+            const stopBtn = Array.from(document.querySelectorAll('button')).some(b =>
+              b.innerText && b.innerText.trim().toLowerCase().includes('stop execution')
+            );
+            return cancelBtn || stopBtn;
+          })()
+        `;
+        ws.send(JSON.stringify({
+          id: 1,
+          method: 'Runtime.evaluate',
+          params: { expression: checkScript, returnByValue: true }
+        }));
+      };
+
+      ws.onmessage = (e) => {
+        clearTimeout(tm);
+        try { ws.close(); } catch {}
+        try {
+          const val = JSON.parse(e.data)?.result?.result?.value;
+          resolve(Boolean(val));
+        } catch {
+          resolve(false);
+        }
+      };
+
+      ws.onerror = () => {
+        clearTimeout(tm);
+        try { ws.close(); } catch {}
+        resolve(false);
+      };
+    });
+  }
+
+  /**
+   * Checks conversation status and not_fully_idle flags in SQLite
+   */
+  static checkConversationState(conversationId) {
+    const dbPath = AppPaths.getConversationsDb();
+    if (fs.existsSync(dbPath)) {
+      try {
+        const db = new DatabaseSync(dbPath, { readOnly: true });
+        try {
+          const row = db
+            .prepare(
+              `SELECT conversation_id, title, status, not_fully_idle 
+               FROM conversation_summaries 
+               WHERE conversation_id = ?`,
+            )
+            .get(conversationId);
+          if (row) {
+            const isRunning = row.status === 'CASCADE_RUN_STATUS_RUNNING' || row.not_fully_idle === 1;
+            return {
+              title: row.title,
+              status: row.status,
+              notFullyIdle: row.not_fully_idle,
+              isRunning,
+            };
+          }
+        } finally {
+          db.close();
+        }
+      } catch {}
+    }
+    return { isRunning: false, status: 'CASCADE_RUN_STATUS_IDLE' };
+  }
+
+  /**
+   * Discovers which conversation is physically open on screen in Antigravity UI,
+   * accurately determining if it is actively generating or idle.
    */
   static async getActiveConversation() {
     // 1. Check DevTools to find what conversation is physically displayed on screen in Antigravity UI
@@ -22,10 +112,16 @@ export class ChatResumer {
             if (page) {
               const match = page.url.match(/\/c\/([a-zA-Z0-9-]+)/);
               if (match) {
+                const conversationId = match[1];
+                const sqliteState = this.checkConversationState(conversationId);
+                const isGeneratingInUi = await this.checkUiGenerating(page.webSocketDebuggerUrl);
+                const isRunning = isGeneratingInUi || sqliteState.isRunning;
+
                 return {
-                  conversationId: match[1],
-                  title: (page.title || 'Active Conversation').replace(/ - Antigravity.*$/, ''),
-                  status: 'CASCADE_RUN_STATUS_RUNNING',
+                  conversationId,
+                  title: (page.title || sqliteState.title || 'Active Conversation').replace(/ - Antigravity.*$/, ''),
+                  status: isRunning ? 'CASCADE_RUN_STATUS_RUNNING' : 'CASCADE_RUN_STATUS_IDLE',
+                  isRunning,
                   source: 'UI_SCREEN',
                 };
               }
@@ -59,16 +155,19 @@ export class ChatResumer {
             )
             .get();
 
+          let isRunning = true;
+
           // If no actively running flag, take the most recently active conversation
           if (!row) {
             row = db
               .prepare(
-                `SELECT conversation_id, title, status 
+                `SELECT conversation_id, title, status, not_fully_idle 
                  FROM conversation_summaries 
                  ORDER BY last_modified_time DESC 
                  LIMIT 1`,
               )
               .get();
+            isRunning = false;
           }
 
           if (row && row.conversation_id) {
@@ -76,6 +175,7 @@ export class ChatResumer {
               conversationId: row.conversation_id,
               title: row.title || 'Recent Conversation',
               status: row.status,
+              isRunning: isRunning || row.status === 'CASCADE_RUN_STATUS_RUNNING' || row.not_fully_idle === 1,
             };
           }
         } finally {
