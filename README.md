@@ -93,9 +93,27 @@ for chunk in response:
 
 ---
 
+
+### 6. Open the Web Dashboard in Chrome
+```bash
+node src/index.js ui
+```
+Or start the daemon (`node src/index.js start`) and navigate to `http://127.0.0.1:8080` in your browser.
+From the Web UI, you can:
+- View all added accounts and their live 5-hour & 5-day Flash 3.8 quotas with progress bars.
+- See the currently active Antigravity account and running conversations.
+- Switch accounts with 1 click.
+- Add new accounts via OAuth or paste tokens.
+- Configure Telegram Bot token, chat ID, and switch thresholds without restarting.
+- Test your accounts in the built-in AI Playground / Prompt tester.
+- Copy preconfigured setup snippets for Cursor, Cline, Continue.dev, and Python.
+
+---
+
 ## Testing
 
 Run the included automated test suite:
 ```bash
 node --test test/app.test.js
 ```
+
