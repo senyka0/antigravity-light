@@ -6,7 +6,7 @@ import { AccountsStore } from './storage.js';
 
 export const OAUTH_CONFIG = {
   clientId: '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com',
-  clientSecret: 'YOUR_GOOGLE_CLIENT_SECRET',
+  clientSecret: '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',
   scopes: [
     'openid',
     'https://www.googleapis.com/auth/cloud-platform',

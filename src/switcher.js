@@ -148,24 +148,24 @@ export class AccountSwitcher {
     // 4. Mark active in local storage
     AccountsStore.setActiveAccount(freshAccount.id);
 
-    // 5. Schedule chat resumption BEFORE restarting language_server
-    // This detached process survives language_server restart and triggers after the 5s boot window
     let resumedChatId = null;
-    if (activeChat?.conversationId) {
-      console.log(`[AccountSwitcher] Scheduling auto-resumption for chat: ${activeChat.title} (${activeChat.conversationId})`);
-      const scheduled = ChatResumer.scheduleResume(activeChat.conversationId, 5000);
-      if (scheduled) {
-        resumedChatId = activeChat.conversationId;
-      }
-    }
 
-    // 6. Hot-restart language_server
+    // 5. Hot-restart language_server
     console.log('[AccountSwitcher] Hot-reloading Antigravity AI language server...');
     ProcessHelper.killLanguageServer();
 
-    // 7. Wait 5 seconds for Antigravity supervisor to respawn language_server and reload windows
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    // 6. Wait 4 seconds for Antigravity supervisor to respawn language_server and reload windows
+    await new Promise((resolve) => setTimeout(resolve, 4000));
     console.log('[AccountSwitcher] Language server reloaded with fresh credentials!');
+
+    // 7. Resume interrupted conversation directly in Antigravity 2.0 UI
+    if (activeChat?.conversationId) {
+      console.log(`[AccountSwitcher] Resuming conversation in Antigravity 2.0 UI: ${activeChat.title} (${activeChat.conversationId})`);
+      const resumed = await ChatResumer.resumeChat(activeChat.conversationId, 'continue');
+      if (resumed) {
+        resumedChatId = activeChat.conversationId;
+      }
+    }
 
     // 8. Refresh and check new account quota
     let newQuota = null;

@@ -84,74 +84,40 @@ export class ChatResumer {
   }
 
   /**
-   * Resumes conversation directly in Antigravity 2.0 UI via Chrome DevTools Protocol
+   * Evaluates prompt insertion and send in a specific CDP WebSocket page target
    */
-  static async resumeInAntigravityUi(conversationId, promptText = 'continue') {
-    const devToolsFile = AppPaths.getDevToolsPortFile();
-    if (!devToolsFile || !fs.existsSync(devToolsFile)) {
-      return { ok: false, reason: 'DevToolsActivePort file not found' };
-    }
-
-    let port;
-    try {
-      const content = fs.readFileSync(devToolsFile, 'utf8').trim().split('\n');
-      port = parseInt(content[0], 10);
-      if (!port || isNaN(port)) {
-        return { ok: false, reason: 'Invalid DevTools port' };
-      }
-    } catch (err) {
-      return { ok: false, reason: err.message };
-    }
-
-    let targets;
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/json`);
-      if (!res.ok) return { ok: false, reason: `HTTP ${res.status} from DevTools` };
-      targets = await res.json();
-    } catch (err) {
-      return { ok: false, reason: `Cannot reach DevTools on port ${port}: ${err.message}` };
-    }
-
-    if (!Array.isArray(targets) || targets.length === 0) {
-      return { ok: false, reason: 'No DevTools targets found' };
-    }
-
-    // Find the Antigravity window target
-    let target = null;
-    if (conversationId) {
-      target = targets.find((t) => t.url && t.url.includes(conversationId));
-    }
-    if (!target) {
-      target = targets.find(
-        (t) => t.type === 'page' && (t.url.includes('/c/') || (t.title && t.title.includes('Antigravity'))),
-      );
-    }
-    if (!target) {
-      target = targets.find((t) => t.type === 'page');
-    }
-
-    if (!target || !target.webSocketDebuggerUrl) {
-      return { ok: false, reason: 'No Antigravity UI page found with WebSocket debugger' };
-    }
-
-    console.log(`[ChatResumer] Connecting to Antigravity 2.0 UI: "${target.title}"`);
-
+  static evaluateUiResume(webSocketDebuggerUrl, conversationId, promptText) {
     return new Promise((resolve) => {
       let resolved = false;
-      const ws = new WebSocket(target.webSocketDebuggerUrl);
+      let ws;
+      try {
+        ws = new WebSocket(webSocketDebuggerUrl);
+      } catch (e) {
+        return resolve({ ok: false, reason: e.message });
+      }
 
       const timeout = setTimeout(() => {
         if (!resolved) {
           resolved = true;
           try { ws.close(); } catch {}
-          resolve({ ok: false, reason: 'Timeout waiting for Antigravity UI response' });
+          resolve({ ok: false, reason: 'Timeout waiting for UI response' });
         }
-      }, 10000);
+      }, 8000);
 
       ws.onopen = () => {
         const expression = `
           (() => {
-            // Check if already generating
+            // 1. If conversationId is specified and we're on a different conversation, switch via sidebar link
+            const targetId = ${JSON.stringify(conversationId || '')};
+            if (targetId && !window.location.href.includes(targetId)) {
+              const link = document.querySelector('a[href*="' + targetId + '"]');
+              if (link) {
+                link.click();
+                return JSON.stringify({ ok: false, status: "navigating_to_conversation" });
+              }
+            }
+
+            // 2. Check if already actively generating
             const stopBtn = Array.from(document.querySelectorAll("button")).find(
               b => b.innerText && b.innerText.trim().toLowerCase().includes("stop execution")
             );
@@ -159,7 +125,7 @@ export class ChatResumer {
               return JSON.stringify({ ok: true, status: "already_running" });
             }
 
-            // Look for explicit Continue/Resume button
+            // 3. Look for an explicit Continue or Resume button
             const continueBtn = Array.from(document.querySelectorAll("button")).find(
               b => b.innerText && (b.innerText.trim().toLowerCase() === "continue" || b.innerText.trim().toLowerCase() === "resume")
             );
@@ -168,7 +134,7 @@ export class ChatResumer {
               return JSON.stringify({ ok: true, status: "clicked_continue_button" });
             }
 
-            // Target the editor
+            // 4. Target the Lexical input editor and send button
             const editor = document.querySelector("[contenteditable=\\"true\\"]");
             const sendBtn = document.querySelector("button[aria-label=\\"Send message\\"]");
             if (editor && sendBtn) {
@@ -219,9 +185,85 @@ export class ChatResumer {
         if (resolved) return;
         resolved = true;
         clearTimeout(timeout);
+        try { ws.close(); } catch {}
         resolve({ ok: false, reason: err.message || 'WebSocket connection error' });
       };
     });
+  }
+
+  /**
+   * Resumes conversation directly in Antigravity 2.0 UI via Chrome DevTools Protocol with retry polling
+   */
+  static async resumeInAntigravityUi(conversationId, promptText = 'continue', maxAttempts = 12, intervalMs = 1000) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const devToolsFile = AppPaths.getDevToolsPortFile();
+      if (!devToolsFile || !fs.existsSync(devToolsFile)) {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        continue;
+      }
+
+      let port;
+      try {
+        const content = fs.readFileSync(devToolsFile, 'utf8').trim().split('\n');
+        port = parseInt(content[0], 10);
+        if (!port || isNaN(port)) {
+          await new Promise((r) => setTimeout(r, intervalMs));
+          continue;
+        }
+      } catch {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        continue;
+      }
+
+      let targets = [];
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/json`);
+        if (res.ok) {
+          targets = await res.json();
+        }
+      } catch {}
+
+      if (!Array.isArray(targets) || targets.length === 0) {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        continue;
+      }
+
+      // Priority 1: Target specifically matching conversationId in url
+      let target = null;
+      if (conversationId) {
+        target = targets.find((t) => t.url && t.url.includes(conversationId));
+      }
+      // Priority 2: Target with active conversation page (/c/)
+      if (!target) {
+        target = targets.find((t) => t.type === 'page' && t.url && t.url.includes('/c/'));
+      }
+      // Priority 3: Antigravity window
+      if (!target) {
+        target = targets.find((t) => t.type === 'page' && t.title && t.title.includes('Antigravity'));
+      }
+      if (!target && targets.length > 0) {
+        target = targets.find((t) => t.type === 'page') || targets[0];
+      }
+
+      if (!target || !target.webSocketDebuggerUrl) {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        continue;
+      }
+
+      const result = await this.evaluateUiResume(target.webSocketDebuggerUrl, conversationId, promptText);
+      if (result && result.ok) {
+        return result;
+      }
+
+      // If still navigating or waiting for editor to render after language server reload, retry
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, intervalMs));
+      } else {
+        return result || { ok: false, reason: 'Editor not ready after retries' };
+      }
+    }
+
+    return { ok: false, reason: 'DevTools UI not reachable after retries' };
   }
 
   /**
