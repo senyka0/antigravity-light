@@ -106,76 +106,178 @@ export class ChatResumer {
           try { ws.close(); } catch {}
           resolve({ ok: false, reason: 'Timeout waiting for UI response' });
         }
-      }, 8000);
+      }, 10000);
+
+      let msgId = 1;
+      const sendCommand = (method, params = {}) => {
+        const id = msgId++;
+        ws.send(JSON.stringify({ id, method, params }));
+        return id;
+      };
+
+      let pendingStep = 'check';
 
       ws.onopen = () => {
-        const expression = `
+        // Step 1: Check UI state (running, buttons, editor)
+        const checkScript = `
           (() => {
-            // 1. If conversationId is specified and we're on a different conversation, switch via sidebar link
+            // Check if on a different conversation
             const targetId = ${JSON.stringify(conversationId || '')};
             if (targetId && !window.location.href.includes(targetId)) {
               const link = document.querySelector('a[href*="' + targetId + '"]');
               if (link) {
                 link.click();
-                return JSON.stringify({ ok: false, status: "navigating_to_conversation" });
+                return { action: "navigating" };
               }
             }
 
-            // 2. Check if already actively generating
+            // Check if already generating
             const stopBtn = Array.from(document.querySelectorAll("button")).find(
-              b => b.innerText && b.innerText.trim().toLowerCase().includes("stop execution")
+              b => (b.innerText && b.innerText.trim().toLowerCase().includes("stop execution")) ||
+                   b.getAttribute("aria-label") === "Cancel (Ctrl+D)"
             );
             if (stopBtn) {
-              return JSON.stringify({ ok: true, status: "already_running" });
+              return { action: "already_running" };
             }
 
-            // 3. Look for an explicit Continue or Resume button
+            // Look for explicit Continue/Resume button
             const continueBtn = Array.from(document.querySelectorAll("button")).find(
               b => b.innerText && (b.innerText.trim().toLowerCase() === "continue" || b.innerText.trim().toLowerCase() === "resume")
             );
             if (continueBtn && !continueBtn.disabled) {
               continueBtn.click();
-              return JSON.stringify({ ok: true, status: "clicked_continue_button" });
+              return { action: "clicked_continue" };
             }
 
-            // 4. Target the Lexical input editor and send button
+            // Check Lexical editor
             const editor = document.querySelector("[contenteditable=\\"true\\"]");
-            const sendBtn = document.querySelector("button[aria-label=\\"Send message\\"]");
-            if (editor && sendBtn) {
-              editor.focus();
-              document.execCommand("selectAll", false, null);
-              document.execCommand("insertText", false, ${JSON.stringify(promptText)});
-              setTimeout(() => {
-                const btn = document.querySelector("button[aria-label=\\"Send message\\"]");
-                if (btn && !btn.disabled) {
-                  btn.click();
-                }
-              }, 150);
-              return JSON.stringify({ ok: true, status: "sent_prompt_in_ui", prompt: ${JSON.stringify(promptText)} });
+            if (!editor) {
+              return { action: "editor_not_found" };
             }
 
-            return JSON.stringify({ ok: false, status: "editor_or_send_button_not_found" });
+            editor.focus();
+            const range = document.createRange();
+            range.selectNodeContents(editor);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            return { action: "ready_to_type" };
           })()
         `;
 
-        ws.send(JSON.stringify({
-          id: 100,
-          method: 'Runtime.evaluate',
-          params: { expression, returnByValue: true },
-        }));
+        sendCommand('Runtime.evaluate', { expression: checkScript, returnByValue: true });
       };
 
       ws.onmessage = (event) => {
         if (resolved) return;
         try {
           const msg = JSON.parse(event.data);
-          if (msg.id === 100) {
+          if (msg.error) {
             resolved = true;
             clearTimeout(timeout);
             try { ws.close(); } catch {}
-            const val = msg.result?.result?.value;
-            const parsedVal = typeof val === 'string' ? JSON.parse(val) : val;
-            resolve(parsedVal || { ok: false, reason: 'Empty result from UI' });
+            return resolve({ ok: false, reason: msg.error.message });
+          }
+
+          if (pendingStep === 'check' && msg.id === 1) {
+            const res = msg.result?.result?.value;
+            if (!res) {
+              resolved = true;
+              clearTimeout(timeout);
+              try { ws.close(); } catch {}
+              return resolve({ ok: false, reason: 'Empty response checking UI' });
+            }
+
+            if (res.action === 'already_running') {
+              resolved = true;
+              clearTimeout(timeout);
+              try { ws.close(); } catch {}
+              return resolve({ ok: true, status: 'already_running' });
+            }
+
+            if (res.action === 'clicked_continue') {
+              resolved = true;
+              clearTimeout(timeout);
+              try { ws.close(); } catch {}
+              return resolve({ ok: true, status: 'clicked_continue_button' });
+            }
+
+            if (res.action === 'navigating') {
+              resolved = true;
+              clearTimeout(timeout);
+              try { ws.close(); } catch {}
+              return resolve({ ok: false, status: 'navigating_to_conversation' });
+            }
+
+            if (res.action === 'ready_to_type') {
+              pendingStep = 'typing';
+              // Native CDP Input event inserts text reliably into Lexical
+              sendCommand('Input.insertText', { text: promptText });
+              return;
+            }
+
+            resolved = true;
+            clearTimeout(timeout);
+            try { ws.close(); } catch {}
+            return resolve({ ok: false, reason: res.action || 'Unknown UI state' });
+          }
+
+          if (pendingStep === 'typing' && msg.id === 2) {
+            pendingStep = 'submitting';
+            // Click send button or dispatch Enter
+            setTimeout(() => {
+              const submitScript = `
+                (() => {
+                  const sendBtn = document.querySelector('button[aria-label="Send message"]');
+                  if (sendBtn && !sendBtn.disabled) {
+                    sendBtn.click();
+                    return { clicked: true };
+                  }
+                  return { clicked: false, sendBtnExists: !!sendBtn, sendBtnDisabled: sendBtn?.disabled };
+                })()
+              `;
+              sendCommand('Runtime.evaluate', { expression: submitScript, returnByValue: true });
+            }, 80);
+            return;
+          }
+
+          if (pendingStep === 'submitting' && msg.id === 3) {
+            const subRes = msg.result?.result?.value;
+            if (subRes?.clicked) {
+              resolved = true;
+              clearTimeout(timeout);
+              try { ws.close(); } catch {}
+              return resolve({ ok: true, status: 'sent_prompt_in_ui', prompt: promptText });
+            }
+
+            // Fallback: Dispatch Enter key event via CDP
+            pendingStep = 'enter_key';
+            sendCommand('Input.dispatchKeyEvent', {
+              type: 'rawKeyDown',
+              windowsVirtualKeyCode: 13,
+              unmodifiedText: '\\r',
+              text: '\\r',
+              key: 'Enter',
+              code: 'Enter',
+            });
+            setTimeout(() => {
+              sendCommand('Input.dispatchKeyEvent', {
+                type: 'keyUp',
+                windowsVirtualKeyCode: 13,
+                unmodifiedText: '\\r',
+                text: '\\r',
+                key: 'Enter',
+                code: 'Enter',
+              });
+            }, 50);
+            return;
+          }
+
+          if (pendingStep === 'enter_key' && msg.id >= 5) {
+            resolved = true;
+            clearTimeout(timeout);
+            try { ws.close(); } catch {}
+            return resolve({ ok: true, status: 'sent_prompt_via_enter', prompt: promptText });
           }
         } catch (err) {
           resolved = true;
