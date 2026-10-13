@@ -9,6 +9,7 @@ import { QuotaChecker } from './quota.js';
 import { ChatResumer } from './chat-resumer.js';
 import { BotNotifier } from './notifier.js';
 import { AccountDetector } from './detector.js';
+import { KeyringManager } from './keyring.js';
 
 export class ProcessHelper {
   static killLanguageServer() {
@@ -109,26 +110,13 @@ export class AccountSwitcher {
       }
     }
 
-    // 3. Write standalone session file
+    // 3. Update OS Keyring (gemini/antigravity) and standalone session file
     try {
-      const standalonePath = AppPaths.getStandaloneOAuthTokenPath();
-      const parentDir = path.dirname(standalonePath);
-      if (!fs.existsSync(parentDir)) {
-        fs.mkdirSync(parentDir, { recursive: true });
-      }
-      const tokenPayload = JSON.stringify({
-        token: {
-          access_token: account.accessToken,
-          token_type: 'Bearer',
-          refresh_token: account.refreshToken,
-          expiry: new Date(account.expiresAt || Date.now() + 3600000).toISOString(),
-        },
-        auth_method: 'consumer',
-        email: account.email,
-      });
-      fs.writeFileSync(standalonePath, tokenPayload, { mode: 0o600 });
-      console.log(`[AccountSwitcher] Updated ${standalonePath}`);
-    } catch {}
+      KeyringManager.setCredentials(account);
+      console.log(`[AccountSwitcher] Updated OS Keyring (gemini/antigravity) for ${account.email}`);
+    } catch (err) {
+      console.warn(`[AccountSwitcher] Failed to write OS Keyring: ${err.message}`);
+    }
   }
 
   /**

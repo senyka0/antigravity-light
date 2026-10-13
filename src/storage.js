@@ -74,7 +74,7 @@ export class AccountsStore {
     return account;
   }
 
-  static updateToken(id, { accessToken, expiresAt, refreshToken }) {
+  static updateToken(id, { accessToken, expiresAt, refreshToken, idToken }) {
     const accounts = this.getAccounts();
     const acc = accounts.find((a) => a.id === id);
     if (!acc) return null;
@@ -83,6 +83,9 @@ export class AccountsStore {
     acc.expiresAt = expiresAt;
     if (refreshToken) {
       acc.refreshToken = refreshToken;
+    }
+    if (idToken) {
+      acc.idToken = idToken;
     }
     this.save(accounts);
     return acc;

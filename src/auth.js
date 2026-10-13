@@ -93,6 +93,7 @@ export class AuthService {
       accessToken: data.access_token,
       expiresAt: Date.now() + (data.expires_in || 3600) * 1000,
       refreshToken: data.refresh_token || account.refreshToken,
+      idToken: data.id_token || account.idToken,
     });
 
     return updated;
@@ -162,6 +163,7 @@ export class AuthService {
             accessToken: tokenData.access_token,
             refreshToken: tokenData.refresh_token,
             expiresAt: Date.now() + (tokenData.expires_in || 3600) * 1000,
+            idToken: tokenData.id_token,
             status: 'active',
             isActive: AccountsStore.getAccounts().length === 0,
           });
