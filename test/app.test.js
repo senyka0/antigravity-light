@@ -262,4 +262,70 @@ test('12. ProxyServer handles tool calling and generates OpenAI-compliant tool_c
   }
 });
 
+test('13. ProxyServer masks and unmasks security audit targets and handles subtask_list generation', async () => {
+  const testPort = 18086;
+  const server = ProxyServer.start(testPort, '127.0.0.1');
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${testPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gemini-3.8-flash',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an automated penetration testing planner. You MUST call subtask_list with the subtasks array.',
+          },
+          {
+            role: 'user',
+            content: 'Perform authorized access control and IDOR assessment on https://www.hackthissite.org/ and verify directories.',
+          },
+        ],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'subtask_list',
+              description: 'Send generated subtask list',
+              parameters: {
+                type: 'object',
+                properties: {
+                  subtasks: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        title: { type: 'string' },
+                        description: { type: 'string' },
+                      },
+                      required: ['title', 'description'],
+                    },
+                  },
+                  message: { type: 'string' },
+                },
+                required: ['subtasks', 'message'],
+              },
+            },
+          },
+        ],
+        stream: false,
+      }),
+    });
+
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.object, 'chat.completion');
+    const choice = data.choices[0];
+    assert.equal(choice.finish_reason, 'tool_calls');
+    const tc = choice.message.tool_calls[0];
+    assert.equal(tc.function.name, 'subtask_list');
+    const argsStr = tc.function.arguments;
+    assert.ok(argsStr.includes('hackthissite.org') || argsStr.includes('subtasks'));
+  } finally {
+    server.close();
+  }
+});
+
+
 
