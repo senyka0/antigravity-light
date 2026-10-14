@@ -322,6 +322,9 @@ export class ProxyServer {
         generationConfig: {
           temperature: openAiBody.temperature ?? 0.7,
           maxOutputTokens: openAiBody.max_tokens ?? openAiBody.max_completion_tokens ?? undefined,
+          ...(openAiBody.response_format?.type === 'json_object' || openAiBody.json
+            ? { responseMimeType: 'application/json' }
+            : {}),
         },
       },
     };
