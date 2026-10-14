@@ -66,6 +66,22 @@ export class MonitorDaemon {
           );
         }
       }
+
+      // 5. Also refresh any inactive accounts whose reset time has elapsed or that are stale (>5m)
+      const allAccounts = AccountsStore.getAccounts();
+      const now = Date.now();
+      for (const otherAcc of allAccounts) {
+        if (otherAcc.id === account.id) continue;
+        const reset5hPassed = otherAcc.quota?.resetTime5h && now >= new Date(otherAcc.quota.resetTime5h).getTime();
+        const reset5dPassed = otherAcc.quota?.resetTime5d && now >= new Date(otherAcc.quota.resetTime5d).getTime();
+        const stale = !otherAcc.quota?.lastChecked || (now - otherAcc.quota.lastChecked) > 300000;
+
+        if (reset5hPassed || reset5dPassed || stale) {
+          try {
+            await QuotaChecker.checkAccount(otherAcc);
+          } catch {}
+        }
+      }
     } catch (err) {
       console.error('[Daemon] Error in check cycle:', err.message);
     } finally {
