@@ -208,4 +208,58 @@ test('11. ChatResumer resolves DevTools port and candidates correctly', () => {
   assert.ok(devToolsFile, 'Should resolve DevToolsActivePort candidate');
 });
 
+test('12. ProxyServer handles tool calling and generates OpenAI-compliant tool_calls', async () => {
+  // Verify tool call ID format matches OpenAI / PentAGI pattern call_{r:24:b}
+  const toolId = ProxyServer.generateToolCallId();
+  assert.equal(toolId.length, 29);
+  assert.match(toolId, /^call_[0-9A-Za-z]{24}$/);
+
+  const testPort = 18084;
+  const server = ProxyServer.start(testPort, '127.0.0.1');
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${testPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gemini-3.8-flash',
+        messages: [{ role: 'user', content: 'What is the weather in Paris? Call get_weather with location Paris.' }],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'get_weather',
+              description: 'Get weather for a given location',
+              parameters: {
+                type: 'object',
+                properties: {
+                  location: { type: 'string', description: 'City name' },
+                },
+                required: ['location'],
+              },
+            },
+          },
+        ],
+        stream: false,
+      }),
+    });
+
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.object, 'chat.completion');
+    assert.ok(data.choices && data.choices.length > 0);
+    const choice = data.choices[0];
+    assert.equal(choice.finish_reason, 'tool_calls');
+    assert.ok(Array.isArray(choice.message.tool_calls) && choice.message.tool_calls.length > 0);
+    const tc = choice.message.tool_calls[0];
+    assert.equal(tc.type, 'function');
+    assert.equal(tc.function.name, 'get_weather');
+    assert.match(tc.id, /^call_[0-9A-Za-z]{24}$/);
+    const args = JSON.parse(tc.function.arguments);
+    assert.ok(args.location && args.location.toLowerCase().includes('paris'));
+  } finally {
+    server.close();
+  }
+});
+
 

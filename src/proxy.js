@@ -297,14 +297,142 @@ export class ProxyServer {
   }
 
   /**
+   * Generates a 24-char base62 tool call ID matching OpenAI format (call_{r:24:b})
+   */
+  static generateToolCallId() {
+    const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+    let result = 'call_';
+    for (let i = 0; i < 24; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  }
+
+  /**
+   * Sanitizes OpenAPI/JSON Schema for Gemini function declarations
+   */
+  static sanitizeParameters(params) {
+    if (!params || typeof params !== 'object') {
+      return { type: 'object', properties: {} };
+    }
+    const clean = JSON.parse(JSON.stringify(params));
+    delete clean['$schema'];
+    delete clean['title'];
+    delete clean['default'];
+    return clean;
+  }
+
+  /**
    * Translates OpenAI chat request to Gemini Cloud Code format
    */
   static convertToGeminiPayload(openAiBody, projectId) {
     const messages = openAiBody.messages || [];
-    const systemMsg = messages.find((m) => m.role === 'system');
+    const systemMsgs = messages.filter((m) => m.role === 'system');
     const chatMsgs = messages.filter((m) => m.role !== 'system');
 
     const backendModel = this.mapToBackendModel(openAiBody.model);
+
+    // Convert OpenAI messages to Gemini contents format
+    const contents = chatMsgs.map((m) => {
+      if (m.role === 'assistant') {
+        let contentText = typeof m.content === 'string' ? m.content : (m.content ? JSON.stringify(m.content) : '');
+        if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+          const callsText = m.tool_calls
+            .map((tc) => {
+              const fn = tc.function || {};
+              return `[Action: Call function "${fn.name}" with arguments: ${fn.arguments || '{}'}]`;
+            })
+            .join('\n');
+          contentText = contentText ? `${contentText}\n${callsText}` : callsText;
+        }
+        return {
+          role: 'model',
+          parts: [{ text: contentText }],
+        };
+      }
+
+      if (m.role === 'tool' || m.role === 'function') {
+        const nameStr = m.name ? ` for "${m.name}"` : '';
+        const contentStr = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '');
+        return {
+          role: 'user',
+          parts: [{ text: `[Observation${nameStr}: ${contentStr}]` }],
+        };
+      }
+
+      // User role or others
+      const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '');
+      return {
+        role: 'user',
+        parts: [{ text }],
+      };
+    });
+
+    // Translate OpenAI tools / functions
+    let tools = undefined;
+    const declarations = [];
+
+    if (Array.isArray(openAiBody.tools)) {
+      for (const t of openAiBody.tools) {
+        if (t?.type === 'function' && t.function) {
+          declarations.push({
+            name: t.function.name,
+            description: t.function.description || '',
+            parameters: this.sanitizeParameters(t.function.parameters),
+          });
+        }
+      }
+    } else if (Array.isArray(openAiBody.functions)) {
+      for (const fn of openAiBody.functions) {
+        if (fn?.name) {
+          declarations.push({
+            name: fn.name,
+            description: fn.description || '',
+            parameters: this.sanitizeParameters(fn.parameters),
+          });
+        }
+      }
+    }
+
+    if (declarations.length > 0) {
+      tools = [{ functionDeclarations: declarations }];
+    }
+
+    // Translate tool_choice / function_call
+    let toolConfig = undefined;
+    const toolChoice = openAiBody.tool_choice || openAiBody.function_call;
+
+    if (toolChoice) {
+      if (toolChoice === 'none') {
+        toolConfig = { functionCallingConfig: { mode: 'NONE' } };
+      } else if (toolChoice === 'required') {
+        toolConfig = { functionCallingConfig: { mode: 'ANY' } };
+      } else if (toolChoice === 'auto') {
+        toolConfig = { functionCallingConfig: { mode: 'AUTO' } };
+      } else if (typeof toolChoice === 'object') {
+        const fnName = toolChoice.function?.name || toolChoice.name;
+        if (fnName) {
+          toolConfig = {
+            functionCallingConfig: {
+              mode: 'ANY',
+              allowedFunctionNames: [fnName],
+            },
+          };
+        }
+      }
+    }
+
+    const systemInstruction = systemMsgs.length > 0
+      ? {
+          parts: [
+            {
+              text: systemMsgs
+                .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
+                .join('\n\n'),
+            },
+          ],
+        }
+      : undefined;
 
     return {
       project: projectId || undefined,
@@ -312,13 +440,10 @@ export class ProxyServer {
       model: backendModel,
       userAgent: AppPaths.getUserAgent(),
       request: {
-        ...(systemMsg
-          ? { systemInstruction: { parts: [{ text: systemMsg.content }] } }
-          : {}),
-        contents: chatMsgs.map((m) => ({
-          role: m.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }],
-        })),
+        ...(systemInstruction ? { systemInstruction } : {}),
+        contents,
+        ...(tools ? { tools } : {}),
+        ...(toolConfig ? { toolConfig } : {}),
         generationConfig: {
           temperature: openAiBody.temperature ?? 0.7,
           maxOutputTokens: openAiBody.max_tokens ?? openAiBody.max_completion_tokens ?? undefined,
@@ -453,8 +578,31 @@ export class ProxyServer {
           const json = await upstreamRes.json();
           const candidate = json?.response?.candidates?.[0];
           const parts = candidate?.content?.parts || [];
-          const textParts = parts.filter((p) => !p.thought && typeof p.text === 'string').map((p) => p.text);
-          const text = textParts.length > 0 ? textParts.join('') : parts.map((p) => p.text || '').join('');
+          const textParts = parts.filter((p) => !p.thought && typeof p.text === 'string' && p.text.length > 0).map((p) => p.text);
+          const funcCallParts = parts.filter((p) => p.functionCall);
+
+          let toolCalls = undefined;
+          let finishReason = (candidate?.finishReason || 'STOP').toLowerCase() === 'stop' ? 'stop' : (candidate?.finishReason || 'stop').toLowerCase();
+
+          if (funcCallParts.length > 0) {
+            toolCalls = funcCallParts.map((p) => ({
+              id: this.generateToolCallId(),
+              type: 'function',
+              function: {
+                name: p.functionCall.name,
+                arguments: typeof p.functionCall.args === 'string'
+                  ? p.functionCall.args
+                  : JSON.stringify(p.functionCall.args || {}),
+              },
+            }));
+            finishReason = 'tool_calls';
+          }
+
+          const message = {
+            role: 'assistant',
+            content: textParts.length > 0 ? textParts.join('') : (toolCalls ? null : ''),
+            ...(toolCalls ? { tool_calls: toolCalls, function_call: toolCalls[0].function } : {}),
+          };
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(
@@ -466,8 +614,8 @@ export class ProxyServer {
               choices: [
                 {
                   index: 0,
-                  message: { role: 'assistant', content: text },
-                  finish_reason: (candidate?.finishReason || 'STOP').toLowerCase() === 'stop' ? 'stop' : (candidate?.finishReason || 'stop').toLowerCase(),
+                  message,
+                  finish_reason: finishReason,
                 },
               ],
               usage: {
@@ -491,6 +639,7 @@ export class ProxyServer {
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
         const streamId = `chatcmpl-${randomUUID()}`;
+        let hasToolCalls = false;
 
         res.on('close', () => {
           reader.cancel().catch(() => {});
@@ -512,7 +661,37 @@ export class ProxyServer {
                 const candidate = parsed?.response?.candidates?.[0];
                 const parts = candidate?.content?.parts || [];
                 for (const part of parts) {
-                  if (!part.thought && typeof part.text === 'string' && part.text.length > 0) {
+                  if (part.functionCall) {
+                    hasToolCalls = true;
+                    const chunk = {
+                      id: streamId,
+                      object: 'chat.completion.chunk',
+                      created: Math.floor(Date.now() / 1000),
+                      model: openAiBody.model || 'gemini-3.8-flash',
+                      choices: [
+                        {
+                          index: 0,
+                          delta: {
+                            tool_calls: [
+                              {
+                                index: 0,
+                                id: this.generateToolCallId(),
+                                type: 'function',
+                                function: {
+                                  name: part.functionCall.name,
+                                  arguments: typeof part.functionCall.args === 'string'
+                                    ? part.functionCall.args
+                                    : JSON.stringify(part.functionCall.args || {}),
+                                },
+                              },
+                            ],
+                          },
+                          finish_reason: null,
+                        },
+                      ],
+                    };
+                    res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+                  } else if (!part.thought && typeof part.text === 'string' && part.text.length > 0) {
                     const chunk = {
                       id: streamId,
                       object: 'chat.completion.chunk',
@@ -543,7 +722,7 @@ export class ProxyServer {
             {
               index: 0,
               delta: {},
-              finish_reason: 'stop',
+              finish_reason: hasToolCalls ? 'tool_calls' : 'stop',
             },
           ],
         };
