@@ -805,13 +805,18 @@ export class ProxyServer {
     const active = AccountsStore.getActiveAccount();
 
     const pool = active ? [active, ...accounts.filter((a) => a.id !== active.id)] : accounts;
-    const candidates = pool.filter((a) => !excludedAccountIds.has(a.id));
+    const available = pool.filter((a) => !excludedAccountIds.has(a.id));
 
-    if (candidates.length === 0) {
+    if (available.length === 0) {
       throw new Error('All accounts are exhausted or unavailable');
     }
 
-    const candidate = candidates[0];
+    // Prioritize healthy non-suspended non-depleted accounts
+    const healthy = available.filter(
+      (a) => a.status !== 'suspended' && a.status !== 'error' && !a.quota?.isDepleted,
+    );
+
+    const candidate = healthy.length > 0 ? healthy[0] : available[0];
     const freshAccount = await AuthService.ensureValidToken(candidate);
 
     if (!freshAccount.projectId) {
@@ -882,6 +887,13 @@ export class ProxyServer {
             break;
           }
 
+          if (r.status === 403) {
+            lastErrText = await r.text();
+            console.warn(`[ProxyServer] ${host} responded with 403 for ${account.email}: ${lastErrText.slice(0, 120)}`);
+            upstreamRes = r;
+            break;
+          }
+
           if (r.ok) {
             upstreamRes = r;
             break;
@@ -905,8 +917,54 @@ export class ProxyServer {
         continue;
       }
 
-      // If rate limited, rotate to next account
+      // If rate limited, rotate to next account and update quota
       if (upstreamRes.status === 429) {
+        AccountsStore.updateQuota(account.id, {
+          ...(account.quota || {}),
+          isDepleted: true,
+          depletionReason: 'Upstream rate limit (HTTP 429)',
+          lastChecked: Date.now(),
+        });
+        if (account.isActive) {
+          const nextHealthy = AccountsStore.getAccounts().find(
+            (a) => a.id !== account.id && a.status !== 'suspended' && a.status !== 'error' && !a.quota?.isDepleted
+          );
+          if (nextHealthy) AccountsStore.setActiveAccount(nextHealthy.id);
+        }
+        excludedIds.add(account.id);
+        continue;
+      }
+
+      // If forbidden / TOS violation, mark suspended and auto-switch
+      if (upstreamRes.status === 403) {
+        const isSuspended =
+          lastErrText.includes('Terms of Service') ||
+          lastErrText.includes('disabled') ||
+          lastErrText.includes('TOS_VIOLATION') ||
+          lastErrText.includes('PERMISSION_DENIED');
+
+        console.warn(`[ProxyServer] Marking ${account.email} as ${isSuspended ? 'suspended' : 'error'} due to HTTP 403.`);
+        AccountsStore.updateAccount(account.id, { status: isSuspended ? 'suspended' : 'error' });
+        AccountsStore.updateQuota(account.id, {
+          flash5h: 0,
+          flash5d: 0,
+          isDepleted: true,
+          depletionReason: isSuspended
+            ? 'Account disabled: Terms of Service violation (HTTP 403)'
+            : 'Access forbidden (HTTP 403)',
+          lastChecked: Date.now(),
+        });
+
+        if (account.isActive) {
+          const nextHealthy = AccountsStore.getAccounts().find(
+            (a) => a.id !== account.id && a.status !== 'suspended' && a.status !== 'error' && !a.quota?.isDepleted
+          );
+          if (nextHealthy) {
+            console.log(`[ProxyServer] Auto-rotating active account from ${account.email} to ${nextHealthy.email}`);
+            AccountsStore.setActiveAccount(nextHealthy.id);
+          }
+        }
+
         excludedIds.add(account.id);
         continue;
       }

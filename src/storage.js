@@ -43,13 +43,25 @@ export class AccountsStore {
     return accounts.find((a) => a.isActive) || accounts[0] || null;
   }
 
-  static setActiveAccount(id) {
+  static setActiveAccount(idOrEmail) {
     const accounts = this.getAccounts();
     for (const acc of accounts) {
-      acc.isActive = acc.id === id;
+      acc.isActive = acc.id === idOrEmail || acc.email.toLowerCase() === idOrEmail.toLowerCase();
     }
     this.save(accounts);
-    return this.getAccount(id);
+    return this.getAccount(idOrEmail) || this.getAccountByEmail(idOrEmail);
+  }
+
+  static updateAccount(idOrEmail, updates) {
+    const accounts = this.getAccounts();
+    const acc = accounts.find(
+      (a) => a.id === idOrEmail || a.email.toLowerCase() === idOrEmail.toLowerCase(),
+    );
+    if (!acc) return null;
+
+    Object.assign(acc, updates);
+    this.save(accounts);
+    return acc;
   }
 
   static upsertAccount(account) {

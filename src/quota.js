@@ -55,6 +55,7 @@ export class QuotaChecker {
   static async fetchQuotaSummary(accessToken, projectId) {
     const userAgent = AppPaths.getUserAgent();
     const payload = JSON.stringify(projectId ? { project: projectId } : {});
+    let lastError = null;
 
     for (const url of QUOTA_SUMMARY_ENDPOINTS) {
       try {
@@ -69,11 +70,20 @@ export class QuotaChecker {
         });
 
         if (res.ok) {
-          return await res.json();
+          const data = await res.json();
+          return { ok: true, ...data };
         }
-      } catch {}
+
+        const text = await res.text();
+        lastError = { status: res.status, text };
+        if (res.status === 401 || res.status === 403) {
+          break;
+        }
+      } catch (err) {
+        lastError = { status: 0, text: err.message };
+      }
     }
-    return null;
+    return { ok: false, error: lastError };
   }
 
   static async fetchAvailableModels(accessToken, projectId) {
@@ -121,6 +131,77 @@ export class QuotaChecker {
       this.fetchQuotaSummary(token, projectId),
       this.fetchAvailableModels(token, projectId),
     ]);
+
+    // Handle Quota Summary Failure or Account Suspension/Error
+    if (!summary?.ok) {
+      const status = summary?.error?.status;
+      const text = summary?.error?.text || '';
+      const isSuspended =
+        status === 403 &&
+        (text.includes('Terms of Service') ||
+          text.includes('disabled') ||
+          text.includes('TOS_VIOLATION') ||
+          text.includes('PERMISSION_DENIED'));
+
+      if (status === 403) {
+        AccountsStore.updateAccount(validAccount.id, { status: isSuspended ? 'suspended' : 'error' });
+        const quotaResult = {
+          flash5h: 0,
+          flash5d: 0,
+          resetTime5h: null,
+          resetTime5d: null,
+          resetDesc5h: null,
+          resetDesc5d: null,
+          models: {},
+          lastChecked: Date.now(),
+          isDepleted: true,
+          depletionReason: isSuspended
+            ? 'Account disabled: Terms of Service violation (HTTP 403)'
+            : 'Access forbidden (HTTP 403)',
+        };
+        AccountsStore.updateQuota(validAccount.id, quotaResult);
+        return quotaResult;
+      }
+
+      if (status === 401) {
+        AccountsStore.updateAccount(validAccount.id, { status: 'error' });
+        const quotaResult = {
+          flash5h: 0,
+          flash5d: 0,
+          resetTime5h: null,
+          resetTime5d: null,
+          resetDesc5h: null,
+          resetDesc5d: null,
+          models: {},
+          lastChecked: Date.now(),
+          isDepleted: true,
+          depletionReason: 'Authentication token invalid or revoked (HTTP 401)',
+        };
+        AccountsStore.updateQuota(validAccount.id, quotaResult);
+        return quotaResult;
+      }
+
+      // Other failure (e.g., network / 5xx)
+      const prevQuota = validAccount.quota;
+      const quotaResult = {
+        flash5h: prevQuota?.flash5h ?? 0,
+        flash5d: prevQuota?.flash5d ?? 0,
+        resetTime5h: prevQuota?.resetTime5h ?? null,
+        resetTime5d: prevQuota?.resetTime5d ?? null,
+        resetDesc5h: prevQuota?.resetDesc5h ?? null,
+        resetDesc5d: prevQuota?.resetDesc5d ?? null,
+        models: prevQuota?.models ?? {},
+        lastChecked: Date.now(),
+        isDepleted: prevQuota ? prevQuota.isDepleted : true,
+        depletionReason: prevQuota ? prevQuota.depletionReason : `Quota fetch failed (${status || 'Network error'})`,
+      };
+      AccountsStore.updateQuota(validAccount.id, quotaResult);
+      return quotaResult;
+    }
+
+    if (validAccount.status === 'suspended' || validAccount.status === 'error') {
+      AccountsStore.updateAccount(validAccount.id, { status: 'active' });
+    }
 
     let flash5h = 100;
     let flash5d = 100;

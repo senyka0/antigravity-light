@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { AppPaths } from './paths.js';
 import { ConfigManager } from './config.js';
@@ -8,6 +9,7 @@ import { QuotaChecker } from './quota.js';
 import { AccountDetector } from './detector.js';
 import { AccountSwitcher } from './switcher.js';
 import { ProxyServer } from './proxy.js';
+import { KeyringManager } from './keyring.js';
 
 export class MonitorDaemon {
   static timer = null;
@@ -30,18 +32,71 @@ export class MonitorDaemon {
       const detected = AccountDetector.detectActiveAccount();
       if (!detected?.email) {
         console.log('[Daemon] No active Antigravity account detected.');
-        return;
+      } else {
+        console.log(`[Daemon] Active Antigravity account: ${detected.email} (${detected.source})`);
       }
 
-      console.log(`[Daemon] Active Antigravity account: ${detected.email} (${detected.source})`);
+      // 2. Find matching account in our registered pool or auto-enroll from Keyring
+      let account = detected?.email ? AccountsStore.getAccountByEmail(detected.email) : null;
+      if (!account && detected?.email) {
+        try {
+          const keyringCreds = KeyringManager.getCredentials();
+          let keyringEmail = keyringCreds?.email;
+          let keyringName = keyringCreds?.name;
+          let keyringPicture = null;
 
-      // 2. Find matching account in our registered pool
-      let account = AccountsStore.getAccountByEmail(detected.email);
+          if (keyringCreds?.id_token) {
+            try {
+              const parts = keyringCreds.id_token.split('.');
+              if (parts.length === 3) {
+                const decoded = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+                keyringEmail = keyringEmail || decoded.email;
+                keyringName = keyringName || decoded.name;
+                keyringPicture = decoded.picture;
+              }
+            } catch {}
+          }
+
+          if (
+            keyringEmail &&
+            keyringEmail.toLowerCase() === detected.email.toLowerCase() &&
+            keyringCreds?.token?.access_token
+          ) {
+            console.log(`[Daemon] Auto-importing detected active account from OS Keyring: ${detected.email}`);
+            const expiresAt = keyringCreds.token.expiry
+              ? new Date(keyringCreds.token.expiry).getTime()
+              : Date.now() + 3600 * 1000;
+
+            account = AccountsStore.upsertAccount({
+              id: randomUUID(),
+              email: detected.email,
+              name: keyringName || detected.email,
+              avatarUrl: keyringPicture || null,
+              accessToken: keyringCreds.token.access_token,
+              refreshToken: keyringCreds.token.refresh_token || '',
+              expiresAt,
+              status: 'active',
+              isActive: true,
+            });
+            console.log(`[Daemon] Successfully enrolled ${account.email} into accounts pool.`);
+          }
+        } catch (importErr) {
+          console.warn('[Daemon] Failed to auto-import keyring account:', importErr.message);
+        }
+      }
+
+      // If still not found, fallback to active account in AccountsStore or first registered account
       if (!account) {
+        account = AccountsStore.getActiveAccount() || AccountsStore.getAccounts()[0];
+        if (!account) {
+          console.log(
+            `[Daemon] No registered accounts found in pool. Add an account via web dashboard or CLI.`,
+          );
+          return;
+        }
         console.log(
-          `[Daemon] Active account ${detected.email} is not in registered accounts pool. Add it via 'antigravity-light login'.`,
+          `[Daemon] Using registered pool account: ${account.email} (detected: ${detected?.email || 'none'})`,
         );
-        return;
       }
 
       // 3. Check live quota for Flash 3.8 High (5h and 5d limits)
@@ -50,16 +105,19 @@ export class MonitorDaemon {
         `[Daemon] Quota [${account.email}]: Flash 3.8 (5-Hour: ${quota.flash5h}%, 5-Day: ${quota.flash5d}%)`,
       );
 
-      // 4. Auto-Switch if 5h or 5d limit is <= threshold (5%)
-      if (quota.isDepleted) {
+      // 4. Auto-Switch if 5h or 5d limit is <= threshold or account is suspended
+      if (quota.isDepleted || account.status === 'suspended') {
+        const reason =
+          quota.depletionReason ||
+          (account.status === 'suspended' ? 'Account suspended (HTTP 403)' : 'Quota limit reached');
         console.warn(
-          `\n⚠️ [Daemon] Quota depletion detected for ${account.email}: ${quota.depletionReason}`,
+          `\n⚠️ [Daemon] Quota depletion/suspension detected for ${account.email}: ${reason}`,
         );
 
         const nextAccount = await AccountSwitcher.findBestAccount(account.id);
         if (nextAccount) {
           console.log(`[Daemon] Found healthy candidate: ${nextAccount.email}`);
-          await AccountSwitcher.performSwitch(nextAccount, quota.depletionReason);
+          await AccountSwitcher.performSwitch(nextAccount, reason);
         } else {
           console.warn(
             `[Daemon] No healthy alternative accounts available in pool! Please add more accounts.`,

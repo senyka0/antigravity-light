@@ -33,7 +33,11 @@ export class AccountSwitcher {
   static async findBestAccount(currentAccountId) {
     const accounts = AccountsStore.getAccounts();
     const candidates = accounts.filter(
-      (a) => a.id !== currentAccountId && a.status !== 'error',
+      (a) =>
+        a.id !== currentAccountId &&
+        a.status !== 'error' &&
+        a.status !== 'suspended' &&
+        !a.quota?.isDepleted,
     );
 
     if (candidates.length === 0) {
