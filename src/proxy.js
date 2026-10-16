@@ -111,17 +111,17 @@ export class ProxyServer {
         }
 
         if (req.method === 'GET' && url.pathname === '/api/auth/url') {
-          const redirectUri = `http://${host}:${port}/oauth-callback`;
+          const redirectUri = this.getRedirectUri(req, host, port);
           const authUrl = AuthService.getAuthUrl(redirectUri);
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ url: authUrl }));
+          res.end(JSON.stringify({ url: authUrl, redirectUri }));
           return;
         }
 
         if (req.method === 'GET' && url.pathname === '/oauth-callback') {
           const code = url.searchParams.get('code');
           if (code) {
-            const redirectUri = `http://${host}:${port}/oauth-callback`;
+            const redirectUri = this.getRedirectUri(req, host, port);
             try {
               const tokenData = await AuthService.exchangeCode(code, redirectUri);
               const userInfo = await AuthService.getUserInfo(tokenData.access_token);
@@ -133,6 +133,7 @@ export class ProxyServer {
                 accessToken: tokenData.access_token,
                 refreshToken: tokenData.refresh_token,
                 expiresAt: Date.now() + (tokenData.expires_in || 3600) * 1000,
+                idToken: tokenData.id_token,
                 status: 'active',
                 isActive: AccountsStore.getAccounts().length === 0,
               });
@@ -151,16 +152,19 @@ export class ProxyServer {
         if (req.method === 'POST' && url.pathname === '/api/auth/code') {
           const body = await this.readJsonBody(req);
           let code = (body.code || '').trim();
+          let redirectUri = this.getRedirectUri(req, host, port);
           if (code.includes('code=')) {
             try {
               const parsed = new URL(code);
               code = parsed.searchParams.get('code') || code;
+              if (parsed.origin) {
+                redirectUri = `${parsed.origin}/oauth-callback`;
+              }
             } catch {
               const match = code.match(/[?&]code=([^&]+)/);
               if (match) code = decodeURIComponent(match[1]);
             }
           }
-          const redirectUri = `http://${host}:${port}/oauth-callback`;
           const tokenData = await AuthService.exchangeCode(code, redirectUri);
           const userInfo = await AuthService.getUserInfo(tokenData.access_token);
           const account = AccountsStore.upsertAccount({
@@ -171,6 +175,7 @@ export class ProxyServer {
             accessToken: tokenData.access_token,
             refreshToken: tokenData.refresh_token,
             expiresAt: Date.now() + (tokenData.expires_in || 3600) * 1000,
+            idToken: tokenData.id_token,
             status: 'active',
             isActive: AccountsStore.getAccounts().length === 0,
           });
@@ -244,6 +249,14 @@ export class ProxyServer {
       });
       req.on('error', reject);
     });
+  }
+
+  static getRedirectUri(req, host, port) {
+    let clientHost = req.headers?.host ? req.headers.host.split(':')[0] : 'localhost';
+    if (!clientHost || clientHost === '0.0.0.0') {
+      clientHost = host && host !== '0.0.0.0' ? host : 'localhost';
+    }
+    return `http://${clientHost}:${port}/oauth-callback`;
   }
 
   static handleModels(res) {

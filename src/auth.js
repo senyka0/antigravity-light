@@ -43,26 +43,43 @@ export class AuthService {
   }
 
   static async exchangeCode(code, redirectUri) {
-    const params = new URLSearchParams({
-      client_id: OAUTH_CONFIG.clientId,
-      client_secret: OAUTH_CONFIG.clientSecret,
-      code,
-      grant_type: 'authorization_code',
-      redirect_uri: redirectUri,
-    });
+    const candidates = [
+      redirectUri,
+      redirectUri.includes('localhost')
+        ? redirectUri.replace('localhost', '127.0.0.1')
+        : redirectUri.includes('127.0.0.1')
+          ? redirectUri.replace('127.0.0.1', 'localhost')
+          : null,
+    ].filter(Boolean);
 
-    const res = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params.toString(),
-    });
+    let lastErr = null;
+    for (const uri of candidates) {
+      const params = new URLSearchParams({
+        client_id: OAUTH_CONFIG.clientId,
+        client_secret: OAUTH_CONFIG.clientSecret,
+        code,
+        grant_type: 'authorization_code',
+        redirect_uri: uri,
+      });
 
-    if (!res.ok) {
+      const res = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString(),
+      });
+
+      if (res.ok) {
+        return await res.json();
+      }
+
       const err = await res.text();
-      throw new Error(`Token exchange failed (HTTP ${res.status}): ${err}`);
+      lastErr = `Token exchange failed (HTTP ${res.status}): ${err}`;
+      if (!err.includes('redirect_uri_mismatch')) {
+        break;
+      }
     }
 
-    return await res.json();
+    throw new Error(lastErr);
   }
 
   static async refreshAccessToken(account) {
