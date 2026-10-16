@@ -4,18 +4,18 @@ import { AccountsStore } from './storage.js';
 import { ConfigManager } from './config.js';
 
 const LOAD_PROJECT_ENDPOINTS = [
-  'https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist',
   'https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist',
+  'https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist',
 ];
 
 const QUOTA_SUMMARY_ENDPOINTS = [
-  'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
   'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
+  'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
 ];
 
 const MODELS_ENDPOINTS = [
-  'https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels',
   'https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels',
+  'https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels',
 ];
 
 export class QuotaChecker {
@@ -24,7 +24,7 @@ export class QuotaChecker {
     const payload = JSON.stringify({
       metadata: {
         ide_type: 'ANTIGRAVITY',
-        ide_version: '2.0.3',
+        ide_version: '2.23.0',
         ide_name: 'antigravity',
       },
     });
@@ -225,11 +225,10 @@ export class QuotaChecker {
         }
 
         for (const bucket of group.buckets || []) {
-          const bucketText = [
+          const bucketKey = [
             bucket.bucketId,
             bucket.window,
             bucket.displayName,
-            bucket.description,
           ]
             .filter(Boolean)
             .join(' ')
@@ -238,15 +237,17 @@ export class QuotaChecker {
           const pct = Math.round((bucket.remainingFraction ?? 1) * 100);
 
           const is5h =
-            bucketText.includes('5h') ||
-            bucketText.includes('5-hour') ||
-            bucketText.includes('5 hour');
+            bucket.window === '5h' ||
+            bucketKey.includes('5h') ||
+            bucketKey.includes('5-hour') ||
+            bucketKey.includes('five hour');
           const is5d =
-            bucketText.includes('week') ||
-            bucketText.includes('5d') ||
-            bucketText.includes('5-day') ||
-            bucketText.includes('5 day') ||
-            bucketText.includes('7d');
+            bucket.window === 'weekly' ||
+            bucketKey.includes('week') ||
+            bucketKey.includes('weekly') ||
+            bucketKey.includes('5d') ||
+            bucketKey.includes('5-day') ||
+            bucketKey.includes('7d');
 
           if (is5h) {
             flash5h = Math.min(flash5h, pct);
@@ -276,11 +277,6 @@ export class QuotaChecker {
         if (info?.quotaInfo?.remainingFraction !== undefined) {
           const pct = Math.round(info.quotaInfo.remainingFraction * 100);
           modelPercentages[modelId] = pct;
-
-          if (modelId.toLowerCase().includes('flash')) {
-            // Flash model base quota limit
-            flash5h = Math.min(flash5h, pct);
-          }
         }
       }
     }

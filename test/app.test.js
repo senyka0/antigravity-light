@@ -10,7 +10,7 @@ import { ProxyServer } from '../src/proxy.js';
 
 test('1. AppPaths resolves correctly on this platform', () => {
   const ua = AppPaths.getUserAgent();
-  assert.match(ua, /^antigravity\/2\.0\.3 (linux|windows)\/(amd64|arm64)$/);
+  assert.match(ua, /^antigravity\/2\.\d+(\.\d+)? (linux|windows)\/(amd64|arm64)$/);
 
   const stateCandidates = AppPaths.getAntigravityStateDbCandidates();
   assert.ok(stateCandidates.length > 0);

@@ -145,6 +145,6 @@ export class AppPaths {
   static getUserAgent() {
     const osTag = isWindows ? 'windows' : 'linux';
     const archTag = process.arch === 'x64' ? 'amd64' : process.arch;
-    return `antigravity/2.0.3 ${osTag}/${archTag}`;
+    return `antigravity/2.23.0 ${osTag}/${archTag}`;
   }
 }
