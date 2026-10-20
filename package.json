@@ -12,6 +12,13 @@
     "start:detached": "nohup node src/index.js start > ~/.antigravity-light/app.log 2>&1 &",
     "ui:detached": "nohup node src/index.js ui > ~/.antigravity-light/app.log 2>&1 &",
     "stop": "node src/index.js stop",
+    "service:install": "node src/index.js service install",
+    "service:start": "node src/index.js service start",
+    "service:stop": "node src/index.js service stop",
+    "service:restart": "node src/index.js service restart",
+    "service:status": "node src/index.js service status",
+    "service:logs": "node src/index.js service logs",
+    "service:uninstall": "node src/index.js service uninstall",
     "cli": "node src/index.js",
     "test": "node --test test/*.test.js"
   },

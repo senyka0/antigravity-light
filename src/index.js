@@ -8,6 +8,7 @@ import { AccountSwitcher } from './switcher.js';
 import { ConfigManager } from './config.js';
 import { MonitorDaemon } from './daemon.js';
 import { ProxyServer } from './proxy.js';
+import { ServiceManager } from './service.js';
 import { randomUUID } from 'node:crypto';
 
 import { exec } from 'node:child_process';
@@ -199,6 +200,38 @@ async function main() {
       break;
     }
 
+    case 'service': {
+      const action = args[1] || 'status';
+      switch (action) {
+        case 'install':
+          ServiceManager.install();
+          break;
+        case 'start':
+          ServiceManager.start();
+          break;
+        case 'stop':
+          ServiceManager.stop();
+          break;
+        case 'restart':
+          ServiceManager.restart();
+          break;
+        case 'status':
+          ServiceManager.status();
+          break;
+        case 'logs':
+          ServiceManager.logs(args[2] ? parseInt(args[2], 10) : 30);
+          break;
+        case 'uninstall':
+          ServiceManager.uninstall();
+          break;
+        default:
+          console.log(`Unknown service action: ${action}`);
+          console.log(`Available actions: install, start, stop, restart, status, logs, uninstall`);
+          break;
+      }
+      break;
+    }
+
     case 'help':
     default: {
       console.log(`
@@ -215,6 +248,7 @@ Commands:
   check                     Check live limits for all registered accounts now
   switch <email>            Manually switch active Antigravity account & reload language server
   config [key] [val]        View or update configuration (e.g. telegramBotToken, telegramChatId)
+  service <action>          Manage background systemd service (install, start, stop, restart, status, logs, uninstall)
   help                      Show this help message
 
 Web Dashboard:

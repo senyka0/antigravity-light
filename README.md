@@ -54,11 +54,39 @@ node src/index.js config telegramBotToken 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ
 node src/index.js config telegramChatId 987654321
 ```
 
-### 5. Start the Daemon & OpenAI Proxy
+### 5. Run as Background System Service (Always Running & Auto-Start on Boot)
+
+On Linux, install and manage the systemd background service:
+
+```bash
+# Install and enable to auto-start on system boot / login
+npm run service:install
+
+# Check live service status
+npm run service:status
+
+# View live service logs
+npm run service:logs
+
+# Restart or stop the service
+npm run service:restart
+npm run service:stop
+```
+
+Or run directly via CLI:
+```bash
+node src/index.js service <install|start|stop|restart|status|logs|uninstall>
+```
+
+*(Note: lingering is automatically enabled via `loginctl enable-linger`, keeping the service running in the background across logouts and server reboots!)*
+
+---
+
+### 6. Start Manually in Foreground
 ```bash
 node src/index.js start
 ```
-This runs the background monitor (auto-switching depleted accounts) and hosts the OpenAI proxy at `http://127.0.0.1:8080/v1`.
+This runs the monitor and hosts the OpenAI proxy at `http://127.0.0.1:8080/v1`.
 
 ---
 
