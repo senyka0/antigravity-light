@@ -730,15 +730,20 @@ Model:    gemini-3.8-flash (or gemini-3.1-pro)
       const chatTitleEl = document.getElementById('chatTitle');
       const chatBadgeEl = document.getElementById('chatBadge');
       const chatStatusEl = document.getElementById('chatStatus');
-      if (data.activeChat) {
+      if (data.activeChat && data.activeChat.isRunning) {
         chatTitleEl.textContent = data.activeChat.title || data.activeChat.conversationId;
         chatBadgeEl.className = 'badge badge-warning';
-        chatBadgeEl.textContent = 'Turn Generating';
+        chatBadgeEl.textContent = 'Generating...';
         chatStatusEl.textContent = 'Auto-resumption armed';
-      } else {
-        chatTitleEl.textContent = 'No Active Turn';
+      } else if (data.activeChat) {
+        chatTitleEl.textContent = data.activeChat.title || data.activeChat.conversationId;
         chatBadgeEl.className = 'badge badge-success';
         chatBadgeEl.textContent = 'Idle';
+        chatStatusEl.textContent = 'Conversation open';
+      } else {
+        chatTitleEl.textContent = 'No Conversation Open';
+        chatBadgeEl.className = 'badge badge-secondary';
+        chatBadgeEl.textContent = 'None';
         chatStatusEl.textContent = 'Standing by';
       }
 

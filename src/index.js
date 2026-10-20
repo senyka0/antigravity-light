@@ -167,7 +167,7 @@ async function main() {
 
     case 'resume': {
       console.log('Attempting to resume conversation directly in Antigravity 2.0 UI...');
-      const active = ChatResumer.findActiveConversation();
+      const active = await ChatResumer.getActiveConversation();
       const prompt = args[1] || 'continue';
       const ok = await ChatResumer.resumeChat(active?.conversationId, prompt);
       if (ok) {
