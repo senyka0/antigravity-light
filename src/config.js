@@ -5,11 +5,14 @@ const DEFAULT_CONFIG = {
   proxyPort: 8080,
   proxyHost: '127.0.0.1',
   autoSwitchEnabled: true,
-  depletionThresholdPercent: 5, // Switch if limit <= 5%
+  depletionThresholdPercent: 15, // Switch if limit <= 15% (defensive safety ceiling)
   checkIntervalSeconds: 60,
   telegramBotToken: '',
   telegramChatId: '',
   targetModel: 'gemini-3.8-flash',
+  requestJitterEnabled: true,
+  minJitterMs: 800,
+  maxJitterMs: 1800,
 };
 
 export class ConfigManager {

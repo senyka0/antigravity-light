@@ -10,6 +10,7 @@ import { ChatResumer } from './chat-resumer.js';
 import { BotNotifier } from './notifier.js';
 import { AccountDetector } from './detector.js';
 import { KeyringManager } from './keyring.js';
+import { ConfigManager } from './config.js';
 
 export class ProcessHelper {
   static killLanguageServer() {
@@ -54,8 +55,11 @@ export class AccountSwitcher {
     const best = candidates[0];
     const avgQuota = ((best.quota?.flash5h ?? 100) + (best.quota?.flash5d ?? 100)) / 2;
 
-    if (avgQuota <= 5) {
-      return null; // All candidates are depleted
+    const config = ConfigManager.load();
+    const threshold = config.depletionThresholdPercent ?? 15;
+
+    if (avgQuota <= threshold) {
+      return null; // All candidates are depleted below safety ceiling
     }
 
     return best;

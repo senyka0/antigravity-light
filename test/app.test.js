@@ -1,3 +1,4 @@
+process.env.NODE_ENV = 'test';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -340,6 +341,12 @@ test('14. ProxyServer parses tool calls from completion text patterns', () => {
   assert.equal(parsed2.name, 'hack_result');
   assert.equal(JSON.parse(parsed2.arguments).result, 'Vulnerabilities found');
 
+  const sample2b = '[Action: Call function "audit_result" with arguments: {"result":"Vulnerabilities found","message":"done"}]';
+  const parsed2b = ProxyServer.parseToolCallFromText(sample2b);
+  assert.ok(parsed2b !== null, 'Should parse "audit_result" format');
+  assert.equal(parsed2b.name, 'hack_result', 'Should unmask audit_result to hack_result');
+  assert.equal(ProxyServer.unmaskToolName('audit_result'), 'hack_result');
+
   const sample3 = '```json\n{"name":"file","arguments":{"path":"/work/test.py","content":"print(1)"}}\n```';
   const parsed3 = ProxyServer.parseToolCallFromText(sample3);
   assert.ok(parsed3 !== null, 'Should parse markdown json block format');
@@ -393,6 +400,106 @@ test('15. ProxyServer handles gpt-5 model mapping, safety filtering, and done fa
   assert.ok(parsedDone.result.includes('/api/auth/email/login'), 'Should include last observation in result');
   assert.ok(parsedDone.message.includes('completed'), 'Should include message recap');
 });
+
+test('16. ProxyServer masks IPv4 targets and defangs offensive exploit terminology', () => {
+  // 1. IPv4 masking
+  const urlMap = new Map();
+  const input = 'Host 45.33.32.156:8080 and internal node 192.168.1.50 probed. Localhost 127.0.0.1:3000 ignored.';
+  const masked = ProxyServer.maskSecurityTargets(input, urlMap);
+  assert.ok(masked.includes('target-system-1.example.com:8080') || masked.includes('target-system-1.example.com'));
+  assert.ok(!masked.includes('45.33.32.156'));
+  assert.ok(!masked.includes('192.168.1.50'));
+  assert.ok(masked.includes('127.0.0.1:3000'), 'Loopback addresses should be preserved');
+
+  const unmasked = ProxyServer.unmaskSecurityTargets(masked, urlMap);
+  assert.ok(unmasked.includes('45.33.32.156:8080'));
+  assert.ok(unmasked.includes('192.168.1.50'));
+
+  // 2. Exploit sanitization
+  const rawExploit = 'Executing sqlmap exploit payload with reverse shell meterpreter against target. Vulnerability exploited successfully.';
+  const sanitized = ProxyServer.sanitizeToolOutput(rawExploit);
+  assert.ok(!sanitized.includes('sqlmap exploit payload'));
+  assert.ok(!sanitized.includes('reverse shell meterpreter'));
+  assert.ok(!sanitized.includes('vulnerability exploited successfully'));
+  assert.ok(sanitized.includes('diagnostic SQL query parameter validation'));
+  assert.ok(sanitized.includes('remote diagnostic callback service'));
+
+  // 3. User message & Metasploit sanitization
+  const pentagiUserMsg = 'Avoid interactive msfconsole execution. Eliminate redundant exploit/multi/handler declarations. Finalize using hack_result.';
+  const sanitizedUser = ProxyServer.sanitizeToolOutput(pentagiUserMsg);
+  assert.ok(!sanitizedUser.includes('msfconsole'));
+  assert.ok(!sanitizedUser.includes('exploit/multi/handler'));
+  assert.ok(!sanitizedUser.includes('hack_result'));
+  assert.ok(sanitizedUser.includes('diag_console'));
+  assert.ok(sanitizedUser.includes('listener/network/receiver'));
+  assert.ok(sanitizedUser.includes('audit_result'));
+
+  // 4. Verification that convertToGeminiPayload sanitizes user messages
+  const userPayload = ProxyServer.convertToGeminiPayload({
+    model: 'gemini-3.8-flash',
+    messages: [{ role: 'user', content: pentagiUserMsg }],
+  }, 'test-proj');
+  const userTurn = userPayload.request.contents[0].parts[0].text;
+  assert.ok(!userTurn.includes('msfconsole'));
+  assert.ok(!userTurn.includes('exploit/multi/handler'));
+  assert.ok(userTurn.includes('diag_console'));
+});
+
+test('17. ProxyServer load balancing prioritizes accounts with highest quota and respects 15% ceiling', async () => {
+  const existingIds = AccountsStore.getAccounts().map((a) => a.id);
+
+  const acc1 = {
+    id: 'test-lb-1',
+    email: 'acc1@example.com',
+    accessToken: 'token-1',
+    projectId: 'test-project',
+    expiresAt: Date.now() + 3600000,
+    status: 'active',
+    quota: { flash5h: 60, flash5d: 60, isDepleted: false },
+  };
+  const acc2 = {
+    id: 'test-lb-2',
+    email: 'acc2@example.com',
+    accessToken: 'token-2',
+    projectId: 'test-project',
+    expiresAt: Date.now() + 3600000,
+    status: 'active',
+    quota: { flash5h: 95, flash5d: 95, isDepleted: false },
+  };
+  const acc3 = {
+    id: 'test-lb-3',
+    email: 'acc3@example.com',
+    accessToken: 'token-3',
+    projectId: 'test-project',
+    expiresAt: Date.now() + 3600000,
+    status: 'active',
+    quota: { flash5h: 10, flash5d: 10, isDepleted: false }, // Below 15% ceiling
+  };
+
+  AccountsStore.upsertAccount(acc1);
+  AccountsStore.upsertAccount(acc2);
+  AccountsStore.upsertAccount(acc3);
+
+  try {
+    // Both acc1 and acc2 are healthy, acc2 has higher quota (95% > 60%)
+    const selected = await ProxyServer.getEligibleAccount(new Set(existingIds));
+    assert.equal(selected.id, 'test-lb-2', 'Should select account with highest quota score');
+
+    // If acc2 is excluded, should pick acc1 (60% > 15% ceiling)
+    const selected2 = await ProxyServer.getEligibleAccount(new Set([...existingIds, 'test-lb-2']));
+    assert.equal(selected2.id, 'test-lb-1', 'Should pick next highest account above ceiling');
+
+    // If acc1 has an active safety cooldown, should fallback to available
+    AccountsStore.updateAccount('test-lb-1', { safetyCooldownUntil: Date.now() + 600000 });
+    const selected3 = await ProxyServer.getEligibleAccount(new Set([...existingIds, 'test-lb-2']));
+    assert.equal(selected3.id, 'test-lb-3', 'Should avoid account in safety cooldown');
+  } finally {
+    AccountsStore.removeAccount('test-lb-1');
+    AccountsStore.removeAccount('test-lb-2');
+    AccountsStore.removeAccount('test-lb-3');
+  }
+});
+
 
 
 
