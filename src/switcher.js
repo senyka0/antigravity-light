@@ -11,6 +11,7 @@ import { BotNotifier } from './notifier.js';
 import { AccountDetector } from './detector.js';
 import { KeyringManager } from './keyring.js';
 import { ConfigManager } from './config.js';
+import { ElectronShellManager } from './electron-shell.js';
 
 export class ProcessHelper {
   static killLanguageServer() {
@@ -118,7 +119,7 @@ export class AccountSwitcher {
       }
     }
 
-    // 3. Update OS Keyring (gemini/antigravity) and standalone session file
+    // 3. Update OS Keyring (GNOME Keyring via DBus / Windows Credential Manager) and standalone session file
     try {
       KeyringManager.setCredentials(account);
       console.log(`[AccountSwitcher] Updated OS Keyring (gemini/antigravity) for ${account.email}`);
@@ -154,23 +155,29 @@ export class AccountSwitcher {
       );
     }
 
-    // 3. Write credentials to Antigravity
+    // 3. Write credentials to Antigravity (OS Keyring + app_storage + standalone)
     this.writeAccountToAntigravity(freshAccount);
 
-    // 4. Mark active in local storage
+    // 4. Sync Electron Desktop Shell in-memory storage manager
+    await ElectronShellManager.syncAccount(freshAccount);
+
+    // 5. Mark active in local storage
     AccountsStore.setActiveAccount(freshAccount.id);
 
     let resumedChatId = null;
 
-    // 5. Hot-restart language_server
+    // 6. Hot-restart language_server
     console.log('[AccountSwitcher] Hot-reloading Antigravity AI language server...');
     ProcessHelper.killLanguageServer();
 
-    // 6. Wait 4 seconds for Antigravity supervisor to respawn language_server and reload windows
+    // 7. Wait 4 seconds for Antigravity supervisor to respawn language_server and reload windows
     await new Promise((resolve) => setTimeout(resolve, 4000));
     console.log('[AccountSwitcher] Language server reloaded with fresh credentials!');
 
-    // 7. Resume interrupted conversation directly in Antigravity 2.0 UI ONLY IF IT WAS RUNNING
+    // 8. Ensure Electron shell in-memory storage manager is synced after reload
+    await ElectronShellManager.syncAccount(freshAccount);
+
+    // 9. Resume interrupted conversation directly in Antigravity 2.0 UI ONLY IF IT WAS RUNNING
     if (activeChat?.conversationId && activeChat?.isRunning) {
       console.log(`[AccountSwitcher] Resuming interrupted conversation in Antigravity 2.0 UI: ${activeChat.title} (${activeChat.conversationId})`);
       const resumed = await ChatResumer.resumeChat(activeChat.conversationId, 'continue');
@@ -181,13 +188,13 @@ export class AccountSwitcher {
       console.log('[AccountSwitcher] Chat is idle. No automatic continuation needed.');
     }
 
-    // 8. Refresh and check new account quota
+    // 10. Refresh and check new account quota
     let newQuota = null;
     try {
       newQuota = await QuotaChecker.checkAccount(freshAccount);
     } catch {}
 
-    // 9. Dispatch Bot Notification
+    // 11. Dispatch Bot Notification
     await BotNotifier.notifyAccountSwitched({
       oldEmail,
       newEmail: freshAccount.email,
