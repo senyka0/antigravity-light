@@ -264,11 +264,17 @@
       grid-template-columns: 2fr 3fr 1.5fr;
       align-items: center;
       gap: 16px;
-      transition: border-color 0.15s ease;
+      transition: all 0.2s ease;
     }
 
     .account-row:hover {
       border-color: #3b82f6;
+    }
+
+    .account-row.active-account-row {
+      background: rgba(16, 185, 129, 0.08);
+      border: 1px solid rgba(16, 185, 129, 0.5);
+      box-shadow: 0 0 16px rgba(16, 185, 129, 0.12);
     }
 
     .account-info {
@@ -764,6 +770,7 @@ Model:    gemini-3.8-flash (or gemini-3.1-pro)
       listEl.innerHTML = pool.map(acc => {
         const isIdeActive = data.activeIdeAccount && data.activeIdeAccount.email.toLowerCase() === acc.email.toLowerCase();
         const isPoolActive = acc.isActive;
+        const isCurrent = isPoolActive || isIdeActive;
 
         const q5h = acc.quota?.flash5h ?? 100;
         const q5d = acc.quota?.flash5d ?? 100;
@@ -771,10 +778,10 @@ Model:    gemini-3.8-flash (or gemini-3.1-pro)
         const getFillClass = pct => pct <= threshold ? 'fill-red' : (pct <= 25 ? 'fill-yellow' : 'fill-green');
 
         return `
-          <div class="account-row">
+          <div class="account-row ${isCurrent ? 'active-account-row' : ''}">
             <div class="account-info">
               <div class="account-email">
-                <span>${acc.email}</span>
+                <span style="${isCurrent ? 'font-weight: 700; color: #34d399;' : ''}">${acc.email}</span>
                 ${isIdeActive ? '<span class="badge badge-success">In IDE</span>' : ''}
                 ${isPoolActive ? '<span class="badge badge-blue">Pool Active</span>' : ''}
               </div>
@@ -812,9 +819,15 @@ Model:    gemini-3.8-flash (or gemini-3.1-pro)
             </div>
 
             <div class="account-actions">
-              <button class="btn-secondary" style="font-size: 12px;" onclick="switchToAccount('${acc.email}')" title="Hot-switch Antigravity to this account">
-                ⚡ Switch
-              </button>
+              ${isCurrent ? `
+                <button class="btn-primary" style="font-size: 12px; background: #059669; border-color: #10b981; cursor: default; opacity: 0.95; padding: 6px 14px;" disabled title="This account is currently active in Antigravity">
+                  ✓ Active
+                </button>
+              ` : `
+                <button id="switchBtn-${acc.id}" class="btn-secondary" style="font-size: 12px; padding: 6px 14px;" onclick="switchToAccount('${acc.email}', '${acc.id}')" title="Hot-switch Antigravity to this account">
+                  ⚡ Switch
+                </button>
+              `}
               <button class="btn-danger" style="font-size: 12px; padding: 6px 10px;" onclick="deleteAccount('${acc.id}')" title="Remove account">
                 🗑️
               </button>
@@ -837,9 +850,14 @@ Model:    gemini-3.8-flash (or gemini-3.1-pro)
       }
     }
 
-    async function switchToAccount(email) {
-      if (!confirm(`Switch Antigravity 2.0 to ${email}?`)) return;
-      showToast(`Switching to ${email}...`);
+    async function switchToAccount(email, id) {
+      const btn = id ? document.getElementById(`switchBtn-${id}`) : null;
+      if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = '0.7';
+        btn.innerText = '⏳ Switching...';
+      }
+      showToast(`Switching Antigravity to ${email}...`);
       try {
         const res = await fetch('/api/switch', {
           method: 'POST',
@@ -848,13 +866,23 @@ Model:    gemini-3.8-flash (or gemini-3.1-pro)
         });
         const data = await res.json();
         if (data.ok) {
-          showToast(`Successfully switched to ${email}`);
-          fetchStatus();
+          showToast(`✓ Switched to ${email}`);
+          await fetchStatus();
         } else {
           showToast(`Switch failed: ${data.error}`);
+          if (btn) {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.innerText = '⚡ Switch';
+          }
         }
       } catch (err) {
         showToast(`Switch error: ${err.message}`);
+        if (btn) {
+          btn.disabled = false;
+          btn.style.opacity = '1';
+          btn.innerText = '⚡ Switch';
+        }
       }
     }
 
