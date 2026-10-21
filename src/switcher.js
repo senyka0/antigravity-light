@@ -143,16 +143,16 @@ export class AccountSwitcher {
     // 1. Ensure target account has a fresh token
     const freshAccount = await AuthService.ensureValidToken(targetAccount);
 
-    // 2. Check if a conversation is actively running BEFORE restarting language_server
-    const activeChat = await ChatResumer.getActiveConversation();
-    if (activeChat?.isRunning) {
-      console.log(
-        `[AccountSwitcher] Detected in-flight generation in chat: ${activeChat.title} (${activeChat.conversationId})`,
-      );
-    } else if (activeChat) {
-      console.log(
-        `[AccountSwitcher] Active chat window is idle: ${activeChat.title} (${activeChat.conversationId})`,
-      );
+    // 2. Snapshot ALL running conversations & queued messages BEFORE restarting language_server
+    const chatSnapshot = await ChatResumer.snapshotAllRunningChats();
+    const runningCount = chatSnapshot.runningChats.length;
+    if (runningCount > 0) {
+      console.log(`[AccountSwitcher] Detected ${runningCount} in-flight active chat(s) before switch:`);
+      for (const chat of chatSnapshot.runningChats) {
+        console.log(`  - "${chat.title}" (${chat.conversationId}) | Queued: ${chat.queuedMessages?.length || 0}`);
+      }
+    } else {
+      console.log('[AccountSwitcher] All conversations are idle before switch.');
     }
 
     // 3. Write credentials to Antigravity (OS Keyring + app_storage + standalone)
@@ -163,8 +163,6 @@ export class AccountSwitcher {
 
     // 5. Mark active in local storage
     AccountsStore.setActiveAccount(freshAccount.id);
-
-    let resumedChatId = null;
 
     // 6. Hot-restart language_server
     console.log('[AccountSwitcher] Hot-reloading Antigravity AI language server...');
@@ -177,13 +175,11 @@ export class AccountSwitcher {
     // 8. Ensure Electron shell in-memory storage manager is synced after reload
     await ElectronShellManager.syncAccount(freshAccount);
 
-    // 9. Resume interrupted conversation directly in Antigravity 2.0 UI ONLY IF IT WAS RUNNING
-    if (activeChat?.conversationId && activeChat?.isRunning) {
-      console.log(`[AccountSwitcher] Resuming interrupted conversation in Antigravity 2.0 UI: ${activeChat.title} (${activeChat.conversationId})`);
-      const resumed = await ChatResumer.resumeChat(activeChat.conversationId, 'continue');
-      if (resumed) {
-        resumedChatId = activeChat.conversationId;
-      }
+    // 9. Resume ALL interrupted conversations and restore their queued messages
+    let resumedResults = [];
+    if (runningCount > 0) {
+      console.log('[AccountSwitcher] Resuming all active conversations and restoring queued messages...');
+      resumedResults = await ChatResumer.resumeAllActiveConversations(chatSnapshot);
     } else {
       console.log('[AccountSwitcher] Chat is idle. No automatic continuation needed.');
     }
@@ -199,7 +195,8 @@ export class AccountSwitcher {
       oldEmail,
       newEmail: freshAccount.email,
       reason,
-      resumedChatId,
+      resumedChatId: resumedResults[0]?.conversationId || null,
+      resumedChats: resumedResults,
       newQuota,
     });
 

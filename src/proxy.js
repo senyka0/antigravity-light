@@ -56,9 +56,10 @@ export class ProxyServer {
           const accounts = AccountsStore.getAccounts();
           const activeIdeAccount = AccountDetector.detectActiveAccount();
           const activeChat = await ChatResumer.getActiveConversation();
+          const activeChats = await ChatResumer.getAllActiveConversations();
           const config = ConfigManager.load();
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ accounts, activeIdeAccount, activeChat, config }));
+          res.end(JSON.stringify({ accounts, activeIdeAccount, activeChat, activeChats, config }));
           return;
         }
 
@@ -86,6 +87,13 @@ export class ProxyServer {
 
         if (req.method === 'POST' && url.pathname === '/api/resume') {
           const body = await this.readJsonBody(req);
+          if (body.all) {
+            const snapshot = await ChatResumer.snapshotAllRunningChats();
+            const results = await ChatResumer.resumeAllActiveConversations(snapshot);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, results }));
+            return;
+          }
           const activeChat = await ChatResumer.getActiveConversation();
           const convoId = body.conversationId || activeChat?.conversationId;
           const ok = await ChatResumer.resumeChat(convoId, body.prompt || 'continue');
@@ -186,14 +194,10 @@ export class ProxyServer {
         }
 
         if (req.method === 'POST' && url.pathname === '/api/notify/test') {
-          const ok = await BotNotifier.notifyAccountSwitched({
-            oldEmail: 'current-account@gmail.com',
-            newEmail: 'switch-candidate@gmail.com',
-            reason: 'Test alert from Antigravity Light Dashboard',
-            newQuota: { flash5h: 92, flash5d: 88 },
-          });
+          const body = await this.readJsonBody(req).catch(() => ({}));
+          const result = await BotNotifier.sendTestAlert(body.token, body.chatId);
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok }));
+          res.end(JSON.stringify(result));
           return;
         }
 

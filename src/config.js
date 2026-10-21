@@ -9,6 +9,7 @@ const DEFAULT_CONFIG = {
   checkIntervalSeconds: 60,
   telegramBotToken: '',
   telegramChatId: '',
+  deviceName: '',
   targetModel: 'gemini-3.8-flash',
   requestJitterEnabled: true,
   minJitterMs: 800,
